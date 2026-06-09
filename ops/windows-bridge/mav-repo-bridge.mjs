@@ -16,6 +16,10 @@ const hermesExe = process.env.HERMES_EXE || 'C:\\Users\\carte\\AppData\\Local\\h
 const defaultTimeoutMs = Number(process.env.MAV_REPO_HERMES_TIMEOUT_MS || 300_000);
 const maxBodyBytes = Number(process.env.MAV_REPO_MAX_BODY_BYTES || 160_000);
 const maxDiffBytes = Number(process.env.MAV_REPO_MAX_DIFF_BYTES || 120_000);
+const maxHermenPromptChars = Number(process.env.MAV_REPO_HERMEN_MAX_PROMPT_CHARS || 12_000);
+const maxHermenChangedFiles = Number(process.env.MAV_REPO_HERMEN_MAX_CHANGED_FILES || 6);
+const minHermenTimeoutMs = Number(process.env.MAV_REPO_HERMEN_MIN_TIMEOUT_MS || 180_000);
+const maxHermenTimeoutMs = Number(process.env.MAV_REPO_HERMEN_MAX_TIMEOUT_MS || 600_000);
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -81,6 +85,39 @@ function runCommand(command, args, { cwd, timeoutMs = 20_000, maxBytes = 80_000 
       });
     });
   });
+}
+
+function clampHermenTimeout(timeoutMs) {
+  const requested = Number(timeoutMs || defaultTimeoutMs);
+  if (!Number.isFinite(requested)) return defaultTimeoutMs;
+  return Math.max(minHermenTimeoutMs, Math.min(maxHermenTimeoutMs, requested));
+}
+
+function buildHermenPrompt(prompt, { repoPath }) {
+  return `You are Hermen, a scoped local coding agent running inside this repository:
+${repoPath}
+
+Hard limits for this pass:
+- Keep this to one focused implementation pass.
+- Inspect only files directly needed for the task. Do not read generated folders, node_modules, dist, build output, or broad repository dumps.
+- Modify at most ${maxHermenChangedFiles} source/config files.
+- If the task needs more files, deployment, secrets, browser verification, or broad refactoring, stop and report BLOCKED with the exact reason.
+- Keep your working context compact. Prefer rg/git diff/stat and targeted line reads over full-file reads.
+- Before your final response, run git diff --stat if you changed files.
+- Final response must start with one of: COMPLETED, PARTIAL, BLOCKED.
+
+Task:
+${prompt}`;
+}
+
+function classifyHermenFailure(error) {
+  const message = String(error?.message || error || '');
+  if (/prompt too large/i.test(message)) return 'prompt_too_large';
+  if (/timed out/i.test(message)) return 'timeout';
+  if (/exceeds the available context size|context length exceeded|Cannot compress further/i.test(message)) return 'context_overflow';
+  if (/Unrepairable tool_call|tool_call arguments|final_response/i.test(message)) return 'tool_call_format';
+  if (/exited with/i.test(message)) return 'process_exit';
+  return 'unknown';
 }
 
 async function git(repoPath, args, options = {}) {
@@ -435,16 +472,21 @@ async function runHermes(prompt, { repoPath, timeoutMs = defaultTimeoutMs, tools
     throw new Error(`Hermes executable not found: ${hermesExe}`);
   }
   const started = Date.now();
-  const childArgs = ['-z', prompt, '--toolsets', toolsets];
+  if (prompt.length > maxHermenPromptChars) {
+    throw new Error(`Hermen prompt too large: ${prompt.length} chars exceeds ${maxHermenPromptChars}. Split the task into a smaller scoped pass.`);
+  }
+  const guardedPrompt = buildHermenPrompt(prompt, { repoPath });
+  const childArgs = ['-z', guardedPrompt, '--toolsets', toolsets];
   const result = await runCommand(hermesExe, childArgs, {
     cwd: repoPath,
-    timeoutMs,
+    timeoutMs: clampHermenTimeout(timeoutMs),
     maxBytes: 120_000
   });
   return {
     output: result.stdout,
     stderr: result.stderr,
     exitCode: result.exitCode,
+    failureType: result.exitCode === 0 ? null : classifyHermenFailure(result.stderr || result.stdout || `Hermes exited with ${result.exitCode}`),
     durationMs: Date.now() - started,
     createdAt: new Date().toISOString()
   };
@@ -513,23 +555,43 @@ const server = http.createServer(async (req, res) => {
       }
       const repoPath = resolveRepo(repo || defaultRepo);
       const before = await repoSnapshot(repoPath);
-      const result = await runHermes(prompt, { repoPath, timeoutMs, toolsets });
+      let result;
+      let runError = null;
+      try {
+        result = await runHermes(prompt, { repoPath, timeoutMs, toolsets });
+      } catch (error) {
+        runError = error;
+        result = {
+          output: '',
+          stderr: error.message,
+          exitCode: 1,
+          failureType: classifyHermenFailure(error),
+          durationMs: null,
+          createdAt: new Date().toISOString()
+        };
+      }
       const after = await repoSnapshot(repoPath);
       const diff = await repoDiff(repoPath).catch((error) => `diff unavailable: ${error.message}`);
       const beforeFiles = new Set(before.changedFiles);
       const changedFilesDelta = after.changedFiles.filter((file) => !beforeFiles.has(file));
-      sendJson(res, 200, {
+      const changedFiles = before.dirty ? changedFilesDelta : after.changedFiles;
+      const changedFileLimitExceeded = changedFiles.length > maxHermenChangedFiles;
+      const payload = {
         ...result,
         repoPath,
         before,
         after,
         baselineDirty: before.dirty,
         allChangedFiles: after.changedFiles,
-        changedFiles: before.dirty ? changedFilesDelta : after.changedFiles,
+        changedFiles,
         changedFilesDelta,
+        changedFileLimitExceeded,
+        maxChangedFiles: maxHermenChangedFiles,
         diffStat: after.diffStat,
-        diff
-      });
+        diff,
+        status: runError ? 'partial_or_failed' : changedFileLimitExceeded ? 'needs_review' : 'completed'
+      };
+      sendJson(res, runError ? 500 : 200, payload);
       return;
     }
 

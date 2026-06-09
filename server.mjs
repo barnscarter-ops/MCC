@@ -16,6 +16,7 @@ const repoBridgeUrl = process.env.MAV_REPO_BRIDGE_URL || '';
 const hermesExe = process.env.HERMES_EXE || 'C:\\Users\\carte\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\hermes.exe';
 const hermesWorkdir = process.env.HERMES_WORKDIR || 'C:\\Users\\carte';
 const hermesTimeoutMs = Number(process.env.HERMES_TIMEOUT_MS || 180_000);
+const hermenRepoTimeoutMs = Number(process.env.HERMEN_REPO_TIMEOUT_MS || Math.max(hermesTimeoutMs, 420_000));
 const dataDir = process.env.MAV_CONSOLE_DATA_DIR || path.join(__dirname, '.mav-console');
 const ledgerFile = path.join(dataDir, 'task-runs.json');
 const workspacePath = process.env.MAV_CONSOLE_WORKSPACE || __dirname;
@@ -479,7 +480,7 @@ async function runHermesBridge(prompt, { timeoutMs = hermesTimeoutMs } = {}) {
   }
 }
 
-async function runRepoBridgeHermen(prompt, { timeoutMs = hermesTimeoutMs } = {}) {
+async function runRepoBridgeHermen(prompt, { timeoutMs = hermenRepoTimeoutMs } = {}) {
   if (!repoBridgeUrl) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
