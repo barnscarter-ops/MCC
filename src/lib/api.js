@@ -109,3 +109,44 @@ export async function updateTaskRun(id, patch) {
   if (!response.ok) throw new Error(payload.error || `Task update failed: ${response.status}`);
   return payload;
 }
+
+export async function queryMemory(query = '') {
+  const suffix = query ? `?query=${encodeURIComponent(query)}` : '';
+  const response = await fetch(`/api/memory${suffix}`, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`Memory query failed: ${response.status}`);
+  return response.json();
+}
+
+export async function querySeoWorkflow() {
+  const response = await fetch('/api/workflows/seo', { cache: 'no-store' });
+  if (!response.ok) throw new Error(`SEO workflow failed: ${response.status}`);
+  return response.json();
+}
+
+export async function querySeoActions() {
+  const response = await fetch('/api/workflows/seo/actions', { cache: 'no-store' });
+  if (!response.ok) throw new Error(`SEO actions failed: ${response.status}`);
+  return response.json();
+}
+
+export async function approveSeoAction(actionId, note = '') {
+  const response = await fetch('/api/workflows/seo/actions/approve', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ actionId, approvedBy: 'MCC', note })
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `SEO approval failed: ${response.status}`);
+  return payload;
+}
+
+export async function runSeoAction(actionId, live = false) {
+  const response = await fetch('/api/workflows/seo/actions/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ actionId, live })
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `SEO action run failed: ${response.status}`);
+  return payload;
+}

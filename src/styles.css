@@ -139,6 +139,342 @@ body {
   color: var(--red);
 }
 
+.homePage {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 8px;
+}
+
+.homeHero {
+  grid-column: 1 / -1;
+}
+
+.homeHeroGrid,
+.workflowStats {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+}
+
+.homeHeroGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.homeHeroGrid > div,
+.workflowCard,
+.agentFleetRow,
+.reportRow,
+.actionRow,
+.faultRow,
+.clearState,
+.recentTaskRow {
+  background: #11131a;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+  font-family: "Barlow Condensed", Inter, sans-serif;
+}
+
+.homeHeroGrid > div {
+  min-height: 96px;
+  padding: 12px;
+}
+
+.homeHeroGrid span,
+.homeHeroGrid strong,
+.homeHeroGrid em,
+.workflowCard strong,
+.workflowCard span,
+.workflowCard em,
+.agentFleetRow strong,
+.agentFleetRow em,
+.reportRow strong,
+.reportRow span,
+.reportRow em,
+.recentTaskRow strong,
+.recentTaskRow span {
+  display: block;
+  line-height: 1.05;
+}
+
+.homeHeroGrid span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.homeHeroGrid strong {
+  margin-top: 10px;
+  color: #f0f2f4;
+  font-size: 30px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.homeHeroGrid em {
+  margin-top: 10px;
+  color: var(--green);
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.workflowPanel {
+  grid-column: span 5;
+  min-height: 300px;
+}
+
+.agentFleetPanel {
+  grid-column: span 3;
+  min-height: 300px;
+}
+
+.reportsPanel {
+  grid-column: span 4;
+  min-height: 300px;
+}
+
+.actionsPanel {
+  grid-column: span 4;
+  min-height: 300px;
+}
+
+.faultPanel {
+  grid-column: span 4;
+  min-height: 300px;
+}
+
+.recentTaskPanel {
+  grid-column: span 4;
+  min-height: 300px;
+}
+
+.workflowCard,
+.agentFleetList,
+.reportList,
+.actionList,
+.faultList,
+.recentTaskList {
+  position: relative;
+  z-index: 1;
+}
+
+.workflowCard {
+  padding: 12px;
+}
+
+.workflowCard strong {
+  color: #f0f2f4;
+  font-size: 24px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.workflowCard span {
+  margin-top: 8px;
+  color: var(--green);
+  font-size: 15px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.workflowCard em {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.workflowStats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.workflowStats span {
+  padding: 8px;
+  background: rgba(107,158,216,.13);
+  border-radius: 3px;
+  color: #b9d2ed;
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 14px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.agentFleetList,
+.reportList,
+.actionList,
+.faultList,
+.recentTaskList {
+  display: grid;
+  gap: 7px;
+}
+
+.agentFleetRow {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px;
+}
+
+.agentFleetRow > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 0 10px var(--yellow);
+}
+
+.agentFleetRow > span.ok {
+  background: var(--green);
+  box-shadow: 0 0 10px var(--green);
+}
+
+.agentFleetRow strong,
+.recentTaskRow strong {
+  color: #f0f2f4;
+  font-size: 15px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.agentFleetRow em,
+.recentTaskRow span {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.reportRow,
+.recentTaskRow {
+  min-height: 60px;
+  padding: 9px;
+}
+
+.reportRow strong {
+  color: #f0f2f4;
+  font-size: 15px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.reportRow span {
+  margin-top: 5px;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.reportRow em {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.actionRow,
+.faultRow,
+.clearState {
+  padding: 9px;
+  color: #dfe6ee;
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 15px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.actionQueueRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 128px;
+  gap: 8px;
+  align-items: center;
+  min-height: 78px;
+}
+
+.actionQueueRow strong,
+.actionQueueRow span,
+.actionQueueRow em {
+  display: block;
+  line-height: 1.05;
+}
+
+.actionQueueRow strong {
+  color: #f0f2f4;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.actionQueueRow span {
+  margin-top: 6px;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.actionQueueRow em {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.actionButtons {
+  display: grid;
+  gap: 6px;
+}
+
+.actionButtons button {
+  min-height: 27px;
+  border: 0;
+  border-radius: 3px;
+  background: #253552;
+  color: #e7eef6;
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.actionButtons button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.actionResult {
+  padding: 8px;
+  border-radius: 3px;
+  background: rgba(68, 159, 116, .14);
+  color: var(--green);
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.actionResult.error {
+  background: rgba(202, 78, 78, .14);
+  color: var(--red);
+}
+
+.faultRow {
+  color: #ffd79a;
+  box-shadow: inset 0 0 0 1px rgba(217,191,111,.18);
+}
+
+.clearState {
+  color: var(--green);
+}
+
 .orchestratorPage {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
@@ -216,6 +552,11 @@ body {
   min-height: 214px;
 }
 
+.memoryPanel {
+  grid-column: span 5;
+  min-height: 360px;
+}
+
 .workerGrid {
   position: relative;
   z-index: 1;
@@ -263,6 +604,103 @@ body {
   text-transform: uppercase;
 }
 
+.memorySummary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  background: #11131a;
+  border-radius: 4px;
+  font-family: "Barlow Condensed", Inter, sans-serif;
+}
+
+.memorySummary strong {
+  color: #f0f2f4;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.memorySummary span {
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.memoryTypes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.memoryTypes span {
+  padding: 6px 8px;
+  border-radius: 3px;
+  background: rgba(107,158,216,.13);
+  color: #b9d2ed;
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.memoryMatches {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.memoryMatch {
+  padding: 9px;
+  background: #11131a;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+}
+
+.memoryMatch strong,
+.memoryMatch span,
+.memoryMatch p {
+  display: block;
+  margin: 0;
+}
+
+.memoryMatch strong {
+  color: #f0f2f4;
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 16px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.memoryMatch span {
+  margin-top: 4px;
+  color: var(--blue);
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.memoryMatch p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.memoryWarning {
+  position: relative;
+  z-index: 1;
+  display: block;
+  margin-top: 8px;
+  color: var(--yellow);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
 .planPanel {
   grid-column: span 7;
   min-height: 360px;
@@ -284,6 +722,9 @@ body {
 .briefPanel pre,
 .briefTask,
 .ledgerList,
+.memorySummary,
+.memoryTypes,
+.memoryMatches,
 .emptyPlan {
   position: relative;
   z-index: 1;
@@ -1680,12 +2121,31 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .homePage {
+    grid-template-columns: 1fr;
+  }
+
+  .homeHero,
+  .workflowPanel,
+  .agentFleetPanel,
+  .reportsPanel,
+  .actionsPanel,
+  .faultPanel,
+  .recentTaskPanel {
+    grid-column: auto;
+  }
+
+  .homeHeroGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .orchestratorPage {
     grid-template-columns: 1fr;
   }
 
   .orchestratorCommand,
   .workerRouter,
+  .memoryPanel,
   .planPanel,
   .ledgerPanel,
   .briefPanel {
@@ -1733,7 +2193,13 @@ body {
   .storageGrid,
   .deviceDetails,
   .networkStats,
-  .workerGrid {
+  .workerGrid,
+  .homeHeroGrid,
+  .workflowStats {
+    grid-template-columns: 1fr;
+  }
+
+  .actionQueueRow {
     grid-template-columns: 1fr;
   }
 

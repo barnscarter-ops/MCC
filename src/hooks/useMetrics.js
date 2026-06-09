@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FALLBACK } from '../config/metrics.js';
-import { queryAllMetrics, queryModelStatus, queryOrchestratorStatus } from '../lib/api.js';
+import { queryAllMetrics, queryModelStatus, queryOrchestratorStatus, querySeoWorkflow } from '../lib/api.js';
 
 export function useMetrics() {
   const [metrics, setMetrics] = useState(FALLBACK);
@@ -92,4 +92,37 @@ export function useOrchestratorStatus() {
   }, []);
 
   return orchestratorStatus;
+}
+
+export function useSeoWorkflow() {
+  const [seoWorkflow, setSeoWorkflow] = useState({
+    state: 'loading',
+    reports: [],
+    faults: [],
+    activeWorkflow: null,
+    statusCounts: {},
+    error: null
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const next = await querySeoWorkflow();
+        if (!cancelled) setSeoWorkflow({ ...next, error: null });
+      } catch (error) {
+        if (!cancelled) {
+          setSeoWorkflow((current) => ({ ...current, state: 'error', error: error.message }));
+        }
+      }
+    }
+    load();
+    const timer = setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  return seoWorkflow;
 }

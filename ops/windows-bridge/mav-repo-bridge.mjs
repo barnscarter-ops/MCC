@@ -6,6 +6,8 @@ import { spawn } from 'node:child_process';
 const port = Number(process.env.MAV_REPO_BRIDGE_PORT || 8790);
 const host = process.env.MAV_REPO_BRIDGE_HOST || '0.0.0.0';
 const defaultRepo = process.env.MAV_REPO_DEFAULT || 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard';
+const seoAppPath = process.env.MAV_SEO_APP_PATH || 'C:\\Workspace\\Active\\SEO-Agents-App';
+const memoryPath = process.env.MAV_MEMORY_PATH || 'C:\\Users\\carte\\.claude\\projects\\memory';
 const allowedRoots = (process.env.MAV_REPO_ALLOWED_ROOTS || 'C:\\Workspace\\Active;C:\\Users\\carte\\CodeProjects')
   .split(';')
   .map((item) => path.resolve(item.trim()))
@@ -97,6 +99,264 @@ function parseStatusPorcelain(output) {
   }));
 }
 
+function parseMemoryFrontmatter(text) {
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return null;
+  const frontmatter = match[1];
+  const body = match[2].trim();
+  const metadata = {};
+  let inMetadata = false;
+  const parsed = {};
+  for (const rawLine of frontmatter.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) continue;
+    if (line.trim() === 'metadata:') {
+      inMetadata = true;
+      continue;
+    }
+    const keyValue = line.match(/^\s*([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!keyValue) continue;
+    const [, key, rawValue] = keyValue;
+    const value = rawValue.replace(/^["']|["']$/g, '');
+    if (inMetadata && rawLine.startsWith('  ')) {
+      metadata[key] = value;
+    } else {
+      inMetadata = false;
+      parsed[key] = value;
+    }
+  }
+  return { ...parsed, metadata, body };
+}
+
+function redactMemoryBody(body) {
+  return body
+    .replace(/(?:ssh|api[_ -]?key|private[_ -]?key|token|secret|credential|password|root|id_ed25519)[^\r\n]*/gi, '[redacted sensitive reference]')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[redacted ip]');
+}
+
+function loadMemoryIndex() {
+  if (!fs.existsSync(memoryPath)) {
+    return {
+      sourcePath: memoryPath,
+      state: 'missing',
+      memories: [],
+      warnings: [`Memory path not found: ${memoryPath}`],
+      updatedAt: new Date().toISOString()
+    };
+  }
+  const warnings = [];
+  const files = fs.readdirSync(memoryPath).filter((file) => file.toLowerCase().endsWith('.md')).sort();
+  const memories = files.flatMap((file) => {
+    const sourcePath = path.join(memoryPath, file);
+    try {
+      const parsed = parseMemoryFrontmatter(fs.readFileSync(sourcePath, 'utf8'));
+      if (!parsed?.name) {
+        warnings.push(`Skipped ${file}: missing frontmatter name.`);
+        return [];
+      }
+      const related = [...parsed.body.matchAll(/\[\[([^\]]+)\]\]/g)].map((match) => match[1]);
+      const stat = fs.statSync(sourcePath);
+      return [{
+        id: parsed.name,
+        description: parsed.description || '',
+        type: parsed.metadata?.type || 'unknown',
+        nodeType: parsed.metadata?.node_type || 'memory',
+        originSessionId: parsed.metadata?.originSessionId || null,
+        related,
+        body: redactMemoryBody(parsed.body),
+        sourcePath,
+        updatedAt: stat.mtime.toISOString()
+      }];
+    } catch (error) {
+      warnings.push(`Skipped ${file}: ${error.message}`);
+      return [];
+    }
+  });
+  const typeCounts = memories.reduce((counts, memory) => {
+    counts[memory.type] = (counts[memory.type] || 0) + 1;
+    return counts;
+  }, {});
+  return {
+    sourcePath: memoryPath,
+    state: 'online',
+    count: memories.length,
+    typeCounts,
+    memories,
+    warnings,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function searchMemory(query) {
+  const index = loadMemoryIndex();
+  const terms = String(query || '').toLowerCase().split(/\s+/).filter((term) => term.length > 2);
+  if (!terms.length) return { ...index, results: index.memories.slice(0, 8) };
+  const results = index.memories.map((memory) => {
+    const haystack = `${memory.id} ${memory.description} ${memory.type} ${memory.body}`.toLowerCase();
+    const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
+    return { ...memory, score };
+  }).filter((memory) => memory.score > 0);
+  results.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  return { ...index, results: results.slice(0, 8) };
+}
+
+function readMarkdownFile(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const stat = fs.statSync(filePath);
+  return {
+    name: path.basename(filePath),
+    path: filePath,
+    updatedAt: stat.mtime.toISOString(),
+    size: stat.size,
+    text: fs.readFileSync(filePath, 'utf8')
+  };
+}
+
+function extractStatusCounts(text) {
+  const statuses = ['COMPLETE', 'PARTIAL', 'BLOCKED', 'INCOMPLETE'];
+  return statuses.reduce((counts, status) => {
+    const matches = text.match(new RegExp(`\\b${status}\\b`, 'gi'));
+    counts[status.toLowerCase()] = matches ? matches.length : 0;
+    return counts;
+  }, {});
+}
+
+function extractHeadings(text, limit = 8) {
+  return text.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^#{1,3}\s+/.test(line))
+    .map((line) => line.replace(/^#{1,3}\s+/, ''))
+    .slice(0, limit);
+}
+
+function firstNonEmptyLines(text, limit = 4) {
+  return text.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && !line.startsWith('---'))
+    .slice(0, limit);
+}
+
+function readJsonFile(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    return { error: `Could not parse ${path.basename(filePath)}: ${error.message}` };
+  }
+}
+
+function workflowPhaseLabel(statusPayload, fallback) {
+  if (!statusPayload || statusPayload.error) return fallback;
+  const labels = {
+    complete: 'Complete',
+    failed: 'Failed',
+    needs_owner_review: 'Needs owner review',
+    ready_to_execute: 'Ready for execution',
+    pending: 'Research needed'
+  };
+  return labels[statusPayload.status] || statusPayload.status || fallback;
+}
+
+function workflowCountsFromStatus(statusPayload, fallbackCounts) {
+  const summary = statusPayload?.summary || {};
+  return {
+    ...fallbackCounts,
+    complete: summary.count_verified ?? fallbackCounts.complete ?? 0,
+    partial: summary.count_partial ?? fallbackCounts.partial ?? 0,
+    blocked: fallbackCounts.blocked ?? 0,
+    incomplete: summary.count_incomplete ?? fallbackCounts.incomplete ?? 0
+  };
+}
+
+function loadSeoWorkflow() {
+  const outputsDir = path.join(seoAppPath, 'outputs');
+  if (!fs.existsSync(outputsDir)) {
+    return {
+      state: 'missing',
+      appPath: seoAppPath,
+      outputsDir,
+      reports: [],
+      faults: [`SEO outputs path not found: ${outputsDir}`],
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  const reportNames = [
+    'grizzly_local_presence_plan.md',
+    'grizzly_execution_queue.md',
+    'final_report.md',
+    'gbp_posting_schedule.md',
+    'website_report.md',
+    'gbp_report.md',
+    'reputation_report.md',
+    'content_report.md',
+    'technical_completion.md',
+    'content_completion.md',
+    'assets_completion.md',
+    'delegation_verification.md'
+  ];
+  const reports = reportNames.flatMap((name) => {
+    const report = readMarkdownFile(path.join(outputsDir, name));
+    if (!report) return [];
+    return [{
+      name: report.name,
+      updatedAt: report.updatedAt,
+      size: report.size,
+      headings: extractHeadings(report.text, 6),
+      summary: firstNonEmptyLines(report.text, 3),
+      statusCounts: extractStatusCounts(report.text)
+    }];
+  });
+
+  const allText = reports.map((report) => `${report.name}\n${report.summary.join('\n')}\n${report.headings.join('\n')}`).join('\n\n');
+  const finalReport = readMarkdownFile(path.join(outputsDir, 'final_report.md'));
+  const queueReport = readMarkdownFile(path.join(outputsDir, 'grizzly_execution_queue.md'));
+  const scheduleReport = readMarkdownFile(path.join(outputsDir, 'gbp_posting_schedule.md'));
+  const workflowStatus = readJsonFile(path.join(outputsDir, 'workflow_status.json'));
+  const markdownStatusCounts = extractStatusCounts([
+    finalReport?.text || '',
+    readMarkdownFile(path.join(outputsDir, 'content_completion.md'))?.text || '',
+    readMarkdownFile(path.join(outputsDir, 'assets_completion.md'))?.text || '',
+    readMarkdownFile(path.join(outputsDir, 'technical_completion.md'))?.text || ''
+  ].join('\n'));
+  const statusCounts = workflowCountsFromStatus(workflowStatus, markdownStatusCounts);
+  const faults = [];
+  for (const reportName of ['final_report.md', 'grizzly_execution_queue.md', 'gbp_posting_schedule.md']) {
+    if (!fs.existsSync(path.join(outputsDir, reportName))) faults.push(`Missing ${reportName}`);
+  }
+  if (/\bBLOCKED\b/i.test(finalReport?.text || '')) faults.push('Final report contains blocked work');
+  if (/\bNEEDS PHOTO\b/i.test(scheduleReport?.text || '')) faults.push('GBP schedule contains photo gaps');
+  if (workflowStatus?.error) faults.push(workflowStatus.error);
+
+  return {
+    state: 'online',
+    source: workflowStatus && !workflowStatus.error ? 'workflow-status' : 'markdown-scan',
+    appPath: seoAppPath,
+    outputsDir,
+    reportCount: reports.length,
+    latestReportAt: reports.map((report) => report.updatedAt).sort().at(-1) || null,
+    reports,
+    statusCounts,
+    activeWorkflow: {
+      name: 'Grizzly SEO Automation',
+      phase: workflowPhaseLabel(workflowStatus, finalReport ? 'Execution reviewed' : queueReport ? 'Ready for execution' : 'Research needed'),
+      reportsGenerated: reports.length
+    },
+    workflowStatus,
+    nextAction: workflowStatus?.next_action || null,
+    ownerSignoffs: workflowStatus?.summary?.owner_signoffs_needed || [],
+    taskSummary: workflowStatus?.summary || null,
+    upcomingActions: [
+      ...(workflowStatus?.summary?.owner_signoffs_needed || []),
+      ...(queueReport ? extractHeadings(queueReport.text, 5) : []),
+      ...(scheduleReport ? extractHeadings(scheduleReport.text, 3) : [])
+    ].slice(0, 8),
+    faults,
+    sourceDigest: allText.slice(0, 4000),
+    updatedAt: new Date().toISOString()
+  };
+}
+
 async function repoSnapshot(repoPath) {
   const [branch, commit, statusText, changedText, statText] = await Promise.all([
     git(repoPath, ['branch', '--show-current']).catch(() => ''),
@@ -140,6 +400,33 @@ async function runHermes(prompt, { repoPath, timeoutMs = defaultTimeoutMs, tools
   };
 }
 
+async function runSeoAgentCommand(args, { timeoutMs = 180_000 } = {}) {
+  const pythonPath = path.join(seoAppPath, '.venv', 'Scripts', 'python.exe');
+  const command = fs.existsSync(pythonPath) ? pythonPath : 'python';
+  const result = await runCommand(command, ['-m', 'seo_agents.main', ...args], {
+    cwd: seoAppPath,
+    timeoutMs,
+    maxBytes: 120_000
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || `seo-agents ${args.join(' ')} failed`);
+  }
+  return result;
+}
+
+async function seoCommandJson(args, options = {}) {
+  const result = await runSeoAgentCommand(args, options);
+  try {
+    return {
+      ...JSON.parse(result.stdout || '{}'),
+      command: `seo-agents ${args.join(' ')}`,
+      durationMs: result.durationMs
+    };
+  } catch (error) {
+    throw new Error(`Could not parse seo-agents JSON output: ${error.message}`);
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   try {
@@ -147,7 +434,9 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         state: 'online',
         defaultRepo,
+        seoAppPath,
         allowedRoots,
+        memoryPath,
         hermes: fs.existsSync(hermesExe) ? 'available' : 'missing',
         port
       });
@@ -191,6 +480,51 @@ const server = http.createServer(async (req, res) => {
         diffStat: after.diffStat,
         diff
       });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/memory') {
+      const query = url.searchParams.get('query');
+      sendJson(res, 200, query ? searchMemory(query) : loadMemoryIndex());
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/seo/status') {
+      sendJson(res, 200, loadSeoWorkflow());
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/seo/actions') {
+      sendJson(res, 200, await seoCommandJson(['actions', '--json']));
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/seo/actions/approve') {
+      const { actionId, approvedBy = 'MCC', note = '' } = await readJsonBody(req);
+      if (!actionId || typeof actionId !== 'string') {
+        sendJson(res, 400, { error: 'actionId is required.' });
+        return;
+      }
+      const result = await runSeoAgentCommand(['approve-action', actionId, '--by', approvedBy, '--note', note], { timeoutMs: 180_000 });
+      sendJson(res, 200, {
+        state: 'approved',
+        actionId,
+        output: result.stdout,
+        command: `seo-agents approve-action ${actionId}`,
+        durationMs: result.durationMs
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/seo/actions/run') {
+      const { actionId, live = false } = await readJsonBody(req);
+      if (!actionId || typeof actionId !== 'string') {
+        sendJson(res, 400, { error: 'actionId is required.' });
+        return;
+      }
+      const args = ['run-action', actionId];
+      if (live) args.push('--live');
+      sendJson(res, 200, await seoCommandJson(args, { timeoutMs: 240_000 }));
       return;
     }
 

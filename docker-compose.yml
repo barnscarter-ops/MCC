@@ -11,6 +11,7 @@ services:
       HERMES_TIMEOUT_MS: 300000
       MAV_CONSOLE_DATA_DIR: /app/data
       MAV_CONSOLE_WORKSPACE: 'C:\Workspace\Active\homelab-noc-dashboard\homelab-noc-dashboard\homelab-noc-dashboard'
+      MAV_MEMORY_PATH: 'C:\Users\carte\.claude\projects\memory'
       PORT: 3010
     ports:
       - "3010:3010"

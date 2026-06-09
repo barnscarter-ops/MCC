@@ -1,8 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as echarts from 'echarts';
-import { useMetrics, useModelStatus, useOrchestratorStatus } from './hooks/useMetrics.js';
-import { createLocalWorkerBrief, createOrchestratorPlan, createTaskRun, updateTaskRun } from './lib/api.js';
+import { useMetrics, useModelStatus, useOrchestratorStatus, useSeoWorkflow } from './hooks/useMetrics.js';
+import {
+  approveSeoAction,
+  createLocalWorkerBrief,
+  createOrchestratorPlan,
+  createTaskRun,
+  queryMemory,
+  querySeoActions,
+  runSeoAction,
+  updateTaskRun
+} from './lib/api.js';
 import {
   clampPercent,
   colorFor,
@@ -129,6 +138,7 @@ function TopBar({ status, modelStatus }) {
         <span>{status.state === 'online' ? 'PROMETHEUS ONLINE' : status.state.toUpperCase()}</span>
       </div>
       <nav className="viewToggle" aria-label="Dashboard view">
+        <button className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}>Home</button>
         <button className={view === 'hardware' ? 'active' : ''} onClick={() => setView('hardware')}>Hardware</button>
         <button className={view === 'network' ? 'active' : ''} onClick={() => setView('network')}>Network Map</button>
         <button className={view === 'orchestrator' ? 'active' : ''} onClick={() => setView('orchestrator')}>Orchestrator</button>
@@ -142,7 +152,7 @@ function TopBar({ status, modelStatus }) {
   );
 }
 
-const DashboardViewContext = React.createContext(['hardware', () => {}]);
+const DashboardViewContext = React.createContext(['home', () => {}]);
 
 function useDashboardView() {
   return React.useContext(DashboardViewContext);
@@ -612,6 +622,7 @@ function OrchestratorPage({ modelStatus }) {
   const [activeRun, setActiveRun] = useState(null);
   const [workerBrief, setWorkerBrief] = useState(null);
   const [taskRuns, setTaskRuns] = useState([]);
+  const [memoryContext, setMemoryContext] = useState({ state: 'loading', memories: [], results: [], typeCounts: {}, warnings: [] });
   const [busy, setBusy] = useState(false);
   const [briefBusyId, setBriefBusyId] = useState(null);
   const [reviewBusyId, setReviewBusyId] = useState(null);
@@ -621,6 +632,24 @@ function OrchestratorPage({ modelStatus }) {
   useEffect(() => {
     setTaskRuns(orchestratorStatus.taskRuns || []);
   }, [orchestratorStatus.taskRuns]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMemory() {
+      try {
+        const next = await queryMemory(idea);
+        if (!cancelled) setMemoryContext({ ...next, error: null });
+      } catch (nextError) {
+        if (!cancelled) setMemoryContext((current) => ({ ...current, state: 'error', error: nextError.message }));
+      }
+    }
+    loadMemory();
+    const timer = setTimeout(loadMemory, 1200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [idea]);
 
   async function handlePlan(event) {
     event.preventDefault();
@@ -705,6 +734,29 @@ function OrchestratorPage({ modelStatus }) {
             </div>
           ))}
         </div>
+      </Panel>
+
+      <Panel title="MEMORY CONTEXT" className="memoryPanel">
+        <div className="memorySummary">
+          <strong>{memoryContext.count ?? memoryContext.memories?.length ?? 0} MEMORIES</strong>
+          <span>{memoryContext.source === 'repo-bridge' ? 'WINDOWS BRIDGE' : (memoryContext.state || 'UNKNOWN').toUpperCase()}</span>
+        </div>
+        <div className="memoryTypes">
+          {Object.entries(memoryContext.typeCounts || {}).map(([type, count]) => (
+            <span key={type}>{type}: {count}</span>
+          ))}
+        </div>
+        <div className="memoryMatches">
+          {(memoryContext.results || memoryContext.memories || []).slice(0, 4).map((memory) => (
+            <div className="memoryMatch" key={memory.id}>
+              <strong>{memory.id}</strong>
+              <span>{memory.type}</span>
+              <p>{memory.description}</p>
+            </div>
+          ))}
+        </div>
+        {memoryContext.warnings?.length ? <em className="memoryWarning">{memoryContext.warnings[0]}</em> : null}
+        {memoryContext.error ? <em className="memoryWarning">{memoryContext.error}</em> : null}
       </Panel>
 
       <Panel title="IMPLEMENTATION PLAN" className="planPanel">
@@ -798,15 +850,219 @@ function OrchestratorPage({ modelStatus }) {
   );
 }
 
+function HomePage({ modelStatus }) {
+  const orchestratorStatus = useOrchestratorStatus();
+  const seoWorkflow = useSeoWorkflow();
+  const [actionQueue, setActionQueue] = useState(null);
+  const [actionBusyId, setActionBusyId] = useState('');
+  const [actionResult, setActionResult] = useState(null);
+  const taskRuns = orchestratorStatus.taskRuns || [];
+  const workers = orchestratorStatus.workers || [];
+  const onlineWorkers = workers.filter((worker) => /online|available|manual/i.test(worker.state || '')).length;
+  const statusCounts = seoWorkflow.statusCounts || {};
+  const reports = seoWorkflow.reports || [];
+  const actions = actionQueue?.actions || seoWorkflow.workflowStatus?.actions?.actions || seoWorkflow.actions?.actions || [];
+  const actionSummary = actionQueue?.summary || seoWorkflow.workflowStatus?.actions?.summary || seoWorkflow.actions?.summary || {};
+  const faults = [
+    ...(seoWorkflow.faults || []),
+    ...(actionQueue?.error ? [actionQueue.error] : []),
+    ...(orchestratorStatus.error ? [orchestratorStatus.error] : [])
+  ];
+  const recentReports = reports
+    .slice()
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+    .slice(0, 5);
+  const activeWorkflow = seoWorkflow.activeWorkflow || {
+    name: 'SEO Automation',
+    phase: seoWorkflow.state || 'loading',
+    reportsGenerated: reports.length
+  };
+
+  async function refreshActions() {
+    try {
+      setActionQueue(await querySeoActions());
+    } catch (error) {
+      setActionQueue((current) => ({ ...(current || {}), error: error.message }));
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const next = await querySeoActions();
+        if (!cancelled) setActionQueue(next);
+      } catch (error) {
+        if (!cancelled) setActionQueue((current) => ({ ...(current || {}), error: error.message }));
+      }
+    }
+    load();
+    const timer = setInterval(load, 20000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  async function handleApproveAction(actionId) {
+    setActionBusyId(actionId);
+    try {
+      const result = await approveSeoAction(actionId, 'Approved from MCC action queue.');
+      setActionResult({ kind: 'approve', actionId, result });
+      await refreshActions();
+    } catch (error) {
+      setActionResult({ kind: 'error', actionId, error: error.message });
+    } finally {
+      setActionBusyId('');
+    }
+  }
+
+  async function handleDryRunAction(actionId) {
+    setActionBusyId(actionId);
+    try {
+      const result = await runSeoAction(actionId, false);
+      setActionResult({ kind: 'dry-run', actionId, result });
+      await refreshActions();
+    } catch (error) {
+      setActionResult({ kind: 'error', actionId, error: error.message });
+    } finally {
+      setActionBusyId('');
+    }
+  }
+
+  return (
+    <div className="homePage">
+      <Panel title="OPERATIONS COMMAND" className="homeHero">
+        <div className="homeHeroGrid">
+          <div>
+            <span>PRIMARY WORKFLOW</span>
+            <strong>{activeWorkflow.name}</strong>
+            <em>{activeWorkflow.phase}</em>
+          </div>
+          <div>
+            <span>AGENT FLEET</span>
+            <strong>{onlineWorkers} / {workers.length}</strong>
+            <em>{modelStatus.state === 'online' ? 'LOCAL AI READY' : 'LOCAL AI OFFLINE'}</em>
+          </div>
+          <div>
+            <span>REPORTS</span>
+            <strong>{seoWorkflow.reportCount ?? reports.length}</strong>
+            <em>{seoWorkflow.source === 'repo-bridge' ? 'WINDOWS BRIDGE' : (seoWorkflow.state || 'UNKNOWN').toUpperCase()}</em>
+          </div>
+          <div>
+            <span>FAULTS</span>
+            <strong>{faults.length}</strong>
+            <em>{faults.length ? 'NEEDS REVIEW' : 'CLEAR'}</em>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="ACTIVE WORKFLOWS" className="workflowPanel">
+        <div className="workflowCard">
+          <strong>{activeWorkflow.name}</strong>
+          <span>{activeWorkflow.phase}</span>
+          <em>{activeWorkflow.reportsGenerated || reports.length} reports generated</em>
+        </div>
+        <div className="workflowStats">
+          <span>Complete: {statusCounts.complete || 0}</span>
+          <span>Partial: {statusCounts.partial || 0}</span>
+          <span>Blocked: {statusCounts.blocked || 0}</span>
+          <span>Incomplete: {statusCounts.incomplete || 0}</span>
+          <span>Needs approval: {actionSummary.needs_approval || 0}</span>
+          <span>Access blocked: {actionSummary.blocked_access || 0}</span>
+        </div>
+      </Panel>
+
+      <Panel title="AGENT FLEET" className="agentFleetPanel">
+        <div className="agentFleetList">
+          {workers.map((worker) => (
+            <div className="agentFleetRow" key={worker.id}>
+              <span className={/online|available|manual/i.test(worker.state || '') ? 'ok' : 'warn'} />
+              <strong>{workerLabel(worker.id)}</strong>
+              <em>{worker.state}</em>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel title="RECENT REPORTS" className="reportsPanel">
+        <div className="reportList">
+          {recentReports.map((report) => (
+            <div className="reportRow" key={report.name}>
+              <strong>{report.name.replace(/_/g, ' ')}</strong>
+              <span>{new Date(report.updatedAt).toLocaleString()}</span>
+              <em>{report.headings?.[0] || report.summary?.[0] || 'Report ready'}</em>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel title="UPCOMING ACTIONS" className="actionsPanel">
+        <div className="actionList">
+          {actions.slice(0, 8).map((action) => (
+            <div className="actionRow actionQueueRow" key={action.id}>
+              <div>
+                <strong>{action.title}</strong>
+                <span>{action.status} / {action.platform} / {action.risk}</span>
+                <em>{action.assigned_agent}</em>
+              </div>
+              <div className="actionButtons">
+                <button type="button" disabled={actionBusyId === action.id} onClick={() => handleDryRunAction(action.id)}>
+                  Dry Run
+                </button>
+                <button
+                  type="button"
+                  disabled={actionBusyId === action.id || action.status !== 'needs_approval' || !action.approval_required || Boolean(action.approval)}
+                  onClick={() => handleApproveAction(action.id)}
+                >
+                  Approve
+                </button>
+              </div>
+            </div>
+          ))}
+          {!actions.length ? <div className="emptyPlan">No upcoming actions detected.</div> : null}
+          {actionResult ? (
+            <div className={actionResult.kind === 'error' ? 'actionResult error' : 'actionResult'}>
+              {actionResult.kind === 'error'
+                ? actionResult.error
+                : `${actionResult.kind}: ${actionResult.result.status || actionResult.result.state || 'complete'}`}
+            </div>
+          ) : null}
+        </div>
+      </Panel>
+
+      <Panel title="FAULTS / BLOCKERS" className="faultPanel">
+        <div className="faultList">
+          {faults.length ? faults.map((fault) => <div className="faultRow" key={fault}>{fault}</div>) : <div className="clearState">No current workflow faults.</div>}
+        </div>
+      </Panel>
+
+      <Panel title="RECENT TASK RUNS" className="recentTaskPanel">
+        <div className="recentTaskList">
+          {taskRuns.slice(0, 6).map((taskRun) => (
+            <div className="recentTaskRow" key={taskRun.id}>
+              <strong>{taskRun.taskTitle}</strong>
+              <span>{workerLabel(taskRun.worker)} / {taskRun.status}</span>
+            </div>
+          ))}
+          {!taskRuns.length ? <div className="emptyPlan">No task runs logged yet.</div> : null}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 function App() {
   const modelStatus = useModelStatus();
   const { metrics, status } = useMetrics();
-  const [view, setView] = useState('hardware');
+  const [view, setView] = useState('home');
   return (
     <DashboardViewContext.Provider value={[view, setView]}>
       <main className="dashboard">
         <TopBar status={status} modelStatus={modelStatus} />
-        {view === 'hardware' ? (
+        {view === 'home' ? (
+          <HomePage modelStatus={modelStatus} />
+        ) : view === 'hardware' ? (
           <div className="mainGrid">
             <Workstation metrics={metrics} />
             <ModelOps metrics={metrics} modelStatus={modelStatus} />

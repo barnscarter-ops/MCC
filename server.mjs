@@ -18,6 +18,7 @@ const hermesTimeoutMs = Number(process.env.HERMES_TIMEOUT_MS || 180_000);
 const dataDir = process.env.MAV_CONSOLE_DATA_DIR || path.join(__dirname, '.mav-console');
 const ledgerFile = path.join(dataDir, 'task-runs.json');
 const workspacePath = process.env.MAV_CONSOLE_WORKSPACE || __dirname;
+const memoryPath = process.env.MAV_MEMORY_PATH || 'C:\\Users\\carte\\.claude\\projects\\memory';
 
 const orchestratorState = {
   updatedAt: null,
@@ -81,6 +82,229 @@ function updateLedgerRun(id, patch) {
   writeLedger(runs);
   orchestratorState.updatedAt = updated.updatedAt;
   return updated;
+}
+
+function parseMemoryFrontmatter(text) {
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return null;
+  const frontmatter = match[1];
+  const body = match[2].trim();
+  const metadata = {};
+  let inMetadata = false;
+  const parsed = {};
+  for (const rawLine of frontmatter.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) continue;
+    if (line.trim() === 'metadata:') {
+      inMetadata = true;
+      continue;
+    }
+    const keyValue = line.match(/^\s*([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!keyValue) continue;
+    const [, key, rawValue] = keyValue;
+    const value = rawValue.replace(/^["']|["']$/g, '');
+    if (inMetadata && rawLine.startsWith('  ')) {
+      metadata[key] = value;
+    } else {
+      inMetadata = false;
+      parsed[key] = value;
+    }
+  }
+  return { ...parsed, metadata, body };
+}
+
+function redactMemoryBody(body) {
+  return body
+    .replace(/(?:ssh|api[_ -]?key|private[_ -]?key|token|secret|credential|password|root|id_ed25519)[^\r\n]*/gi, '[redacted sensitive reference]')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[redacted ip]');
+}
+
+function loadMemoryIndex() {
+  if (!fs.existsSync(memoryPath)) {
+    return {
+      sourcePath: memoryPath,
+      state: 'missing',
+      memories: [],
+      warnings: [`Memory path not found: ${memoryPath}`],
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  const warnings = [];
+  const files = fs.readdirSync(memoryPath)
+    .filter((file) => file.toLowerCase().endsWith('.md'))
+    .sort();
+  const memories = files.flatMap((file) => {
+    const sourcePath = path.join(memoryPath, file);
+    try {
+      const parsed = parseMemoryFrontmatter(fs.readFileSync(sourcePath, 'utf8'));
+      if (!parsed?.name) {
+        warnings.push(`Skipped ${file}: missing frontmatter name.`);
+        return [];
+      }
+      const related = [...parsed.body.matchAll(/\[\[([^\]]+)\]\]/g)].map((match) => match[1]);
+      const stat = fs.statSync(sourcePath);
+      return [{
+        id: parsed.name,
+        description: parsed.description || '',
+        type: parsed.metadata?.type || 'unknown',
+        nodeType: parsed.metadata?.node_type || 'memory',
+        originSessionId: parsed.metadata?.originSessionId || null,
+        related,
+        body: redactMemoryBody(parsed.body),
+        sourcePath,
+        updatedAt: stat.mtime.toISOString()
+      }];
+    } catch (error) {
+      warnings.push(`Skipped ${file}: ${error.message}`);
+      return [];
+    }
+  });
+  const typeCounts = memories.reduce((counts, memory) => {
+    counts[memory.type] = (counts[memory.type] || 0) + 1;
+    return counts;
+  }, {});
+  return {
+    sourcePath: memoryPath,
+    state: 'online',
+    count: memories.length,
+    typeCounts,
+    memories,
+    warnings,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function searchMemory(query) {
+  const index = loadMemoryIndex();
+  const terms = String(query || '').toLowerCase().split(/\s+/).filter((term) => term.length > 2);
+  if (!terms.length) return { ...index, results: index.memories.slice(0, 8) };
+  const scored = index.memories.map((memory) => {
+    const haystack = `${memory.id} ${memory.description} ${memory.type} ${memory.body}`.toLowerCase();
+    const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
+    return { ...memory, score };
+  }).filter((memory) => memory.score > 0);
+  scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  return { ...index, results: scored.slice(0, 8) };
+}
+
+async function getMemoryIndex(query = '') {
+  const local = query ? searchMemory(query) : loadMemoryIndex();
+  if (local.state === 'online' || !repoBridgeUrl) return local;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3500);
+  try {
+    const upstream = new URL('/memory', repoBridgeUrl);
+    if (query) upstream.searchParams.set('query', query);
+    const response = await fetch(upstream, {
+      signal: controller.signal,
+      headers: { accept: 'application/json' }
+    });
+    const payload = await response.json();
+    return {
+      ...payload,
+      source: 'repo-bridge',
+      localWarning: local.warnings?.[0] || null
+    };
+  } catch (error) {
+    return {
+      ...local,
+      source: 'local',
+      warnings: [...(local.warnings || []), error.name === 'AbortError' ? 'Repo bridge memory timed out' : error.message]
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getSeoWorkflowStatus() {
+  if (!repoBridgeUrl) {
+    return {
+      state: 'not-configured',
+      reports: [],
+      faults: ['Repo bridge is not configured.'],
+      updatedAt: new Date().toISOString()
+    };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3500);
+  try {
+    const response = await fetch(new URL('/seo/status', repoBridgeUrl), {
+      signal: controller.signal,
+      headers: { accept: 'application/json' }
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload?.error || `SEO workflow failed: ${response.status}`);
+    }
+    return { ...payload, source: 'repo-bridge' };
+  } catch (error) {
+    return {
+      state: 'error',
+      source: 'repo-bridge',
+      reports: [],
+      faults: [error.name === 'AbortError' ? 'SEO workflow query timed out' : error.message],
+      updatedAt: new Date().toISOString()
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function callRepoBridge(pathname, { method = 'GET', body = null, timeoutMs = 180_000 } = {}) {
+  if (!repoBridgeUrl) {
+    throw new Error('Repo bridge is not configured.');
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(new URL(pathname, repoBridgeUrl), {
+      method,
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json',
+        ...(body ? { 'content-type': 'application/json' } : {})
+      },
+      body: body ? JSON.stringify(body) : null
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload?.error || `Repo bridge failed: ${response.status}`);
+    }
+    return { ...payload, source: 'repo-bridge' };
+  } catch (error) {
+    throw new Error(error.name === 'AbortError' ? 'Repo bridge action timed out' : error.message);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function proxySeoActions(req, res, action) {
+  try {
+    if (action === 'list') {
+      sendJson(res, 200, await callRepoBridge('/seo/actions', { timeoutMs: 180_000 }));
+      return;
+    }
+    const payload = await readJsonBody(req);
+    if (action === 'approve') {
+      sendJson(res, 200, await callRepoBridge('/seo/actions/approve', {
+        method: 'POST',
+        body: payload,
+        timeoutMs: 180_000
+      }));
+      return;
+    }
+    if (action === 'run') {
+      sendJson(res, 200, await callRepoBridge('/seo/actions/run', {
+        method: 'POST',
+        body: payload,
+        timeoutMs: 240_000
+      }));
+    }
+  } catch (error) {
+    sendJson(res, 500, { error: error.message, source: 'repo-bridge' });
+  }
 }
 
 async function readJsonBody(req) {
@@ -418,6 +642,7 @@ async function getLlamaStatus(res) {
 async function getOrchestratorStatus(res) {
   const hermesState = await getHermesState();
   const repoBridgeState = await getRepoBridgeState();
+  const memoryIndex = await getMemoryIndex();
   const taskRuns = readLedger();
   sendJson(res, 200, {
     updatedAt: orchestratorState.updatedAt,
@@ -464,10 +689,11 @@ async function getOrchestratorStatus(res) {
       },
       {
         id: 'rag-server',
-        label: 'ProDesk Embeddings',
+        label: 'MCC Memory',
         role: 'project memory and retrieval',
         cost: 'local-network',
-        state: 'planned'
+        state: memoryIndex.state,
+        detail: `${memoryIndex.count || 0} memories`
       }
     ],
     runs: orchestratorState.runs,
@@ -770,6 +996,27 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/orchestrator/status') {
     await getOrchestratorStatus(res);
+    return;
+  }
+  if (url.pathname === '/api/memory') {
+    const query = url.searchParams.get('query');
+    sendJson(res, 200, await getMemoryIndex(query || ''));
+    return;
+  }
+  if (url.pathname === '/api/workflows/seo') {
+    sendJson(res, 200, await getSeoWorkflowStatus());
+    return;
+  }
+  if (url.pathname === '/api/workflows/seo/actions') {
+    await proxySeoActions(req, res, 'list');
+    return;
+  }
+  if (url.pathname === '/api/workflows/seo/actions/approve' && req.method === 'POST') {
+    await proxySeoActions(req, res, 'approve');
+    return;
+  }
+  if (url.pathname === '/api/workflows/seo/actions/run' && req.method === 'POST') {
+    await proxySeoActions(req, res, 'run');
     return;
   }
   if (url.pathname === '/api/orchestrator/plan' && req.method === 'POST') {
