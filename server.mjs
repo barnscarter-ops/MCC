@@ -17,6 +17,7 @@ const hermesExe = process.env.HERMES_EXE || 'C:\\Users\\carte\\AppData\\Local\\h
 const hermesWorkdir = process.env.HERMES_WORKDIR || 'C:\\Users\\carte';
 const hermesTimeoutMs = Number(process.env.HERMES_TIMEOUT_MS || 180_000);
 const hermenRepoTimeoutMs = Number(process.env.HERMEN_REPO_TIMEOUT_MS || Math.max(hermesTimeoutMs, 420_000));
+const claudeManagerTimeoutMs = Number(process.env.CLAUDE_MANAGER_TIMEOUT_MS || 180_000);
 const dataDir = process.env.MAV_CONSOLE_DATA_DIR || path.join(__dirname, '.mav-console');
 const ledgerFile = path.join(dataDir, 'task-runs.json');
 const workspacePath = process.env.MAV_CONSOLE_WORKSPACE || __dirname;
@@ -340,6 +341,19 @@ async function callLocalModel(input, { maxOutputTokens = 1400 } = {}) {
     throw new Error(payload?.error?.message || `Local model failed: ${response.status}`);
   }
   return textFromLlamaResponse(payload);
+}
+
+async function createClaudeManagedWorkOrder({ idea, task, mode, repoPath }) {
+  return callRepoBridge('/worker/claude-manager', {
+    method: 'POST',
+    timeoutMs: claudeManagerTimeoutMs,
+    body: {
+      idea,
+      task,
+      mode,
+      repo: repoPath
+    }
+  });
 }
 
 function fallbackPlan(idea, rawText = '') {
@@ -685,9 +699,9 @@ async function getOrchestratorStatus(res) {
       {
         id: 'claude-cli',
         label: 'Claude CLI',
-        role: 'specialist implementation pass',
+        role: 'Hermen prompt manager',
         cost: 'subscription-gated',
-        state: 'not-wired'
+        state: 'manager-ready'
       },
       {
         id: 'rag-server',
@@ -866,36 +880,42 @@ async function createTaskRun(req, res) {
     let output = '';
     let stderr = '';
     let durationMs = null;
+    let managerWorkOrder = null;
     if (worker === 'hermes-qwen') {
+      managerWorkOrder = await createClaudeManagedWorkOrder({ idea, task, mode, repoPath: workspacePath });
       const prompt = `You are Hermen, the local Hermes/Qwen worker inside mav-console.
 
-This assignment is being logged in the mav-console task ledger.
+Claude CLI has already reduced this into a scoped work order. Execute only this work order.
 
 Workspace:
 ${workspacePath}
 
-Product idea:
-${idea}
-
-Assigned task:
-${task.title}
-
-Routing reason:
-${task.reason || 'No reason supplied.'}
-
 Mode:
 ${mode}
 
+Claude manager summary:
+${managerWorkOrder.summary}
+
+Hermen work order:
+${managerWorkOrder.harmenPrompt}
+
 Rules:
-- Keep the work tightly scoped to the assigned task.
+- Keep the work tightly scoped to the work order.
 - If mode is "brief", inspect/recommend only and do not edit files.
-- If mode is "implement", you may make minimal edits only if the task explicitly asks for implementation.
+- If mode is "implement", make minimal edits only if the work order explicitly asks for implementation.
 - At the end, include a short "Files changed:" section.
 - Include verification commands run or recommended.`;
       const result = await runRepoBridgeHermen(prompt) || await runHermesOneshot(prompt);
-      output = result.output;
+      output = `Claude manager:
+${managerWorkOrder.summary}
+
+Hermen work order:
+${managerWorkOrder.harmenPrompt}
+
+Hermen result:
+${result.output}`;
       stderr = result.stderr || '';
-      durationMs = result.durationMs || null;
+      durationMs = (managerWorkOrder.durationMs || 0) + (result.durationMs || 0);
       ledgerRun.repoPath = result.repoPath || workspacePath;
       ledgerRun.repoBefore = result.before || null;
       ledgerRun.repoAfter = result.after || null;
@@ -904,6 +924,7 @@ Rules:
       ledgerRun.changedFiles = Array.isArray(result.changedFiles) ? result.changedFiles : [];
       ledgerRun.diffStat = result.diffStat || '';
       ledgerRun.diff = result.diff || '';
+      ledgerRun.verification = managerWorkOrder.qcChecks;
     } else if (worker === 'local-qwen') {
       const prompt = `You are the local Qwen coding worker inside mav-console.
 
@@ -935,6 +956,7 @@ Do not claim you changed files.`;
       changedFiles: ledgerRun.changedFiles.length ? ledgerRun.changedFiles : extractChangedFiles(output),
       diffStat: ledgerRun.diffStat,
       diff: ledgerRun.diff,
+      verification: ledgerRun.verification,
       finishedAt
     });
     sendJson(res, 200, updated);

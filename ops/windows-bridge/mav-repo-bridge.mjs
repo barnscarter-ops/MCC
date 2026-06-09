@@ -20,6 +20,9 @@ const maxHermenPromptChars = Number(process.env.MAV_REPO_HERMEN_MAX_PROMPT_CHARS
 const maxHermenChangedFiles = Number(process.env.MAV_REPO_HERMEN_MAX_CHANGED_FILES || 6);
 const minHermenTimeoutMs = Number(process.env.MAV_REPO_HERMEN_MIN_TIMEOUT_MS || 180_000);
 const maxHermenTimeoutMs = Number(process.env.MAV_REPO_HERMEN_MAX_TIMEOUT_MS || 600_000);
+const claudeExe = process.env.CLAUDE_EXE || 'C:\\Users\\carte\\AppData\\Roaming\\npm\\claude.cmd';
+const claudeManagerModel = process.env.CLAUDE_MANAGER_MODEL || 'sonnet';
+const claudeManagerTimeoutMs = Number(process.env.CLAUDE_MANAGER_TIMEOUT_MS || 180_000);
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -50,7 +53,7 @@ function resolveRepo(repoPath = defaultRepo) {
   return resolved;
 }
 
-function runCommand(command, args, { cwd, timeoutMs = 20_000, maxBytes = 80_000 } = {}) {
+function runCommand(command, args, { cwd, timeoutMs = 20_000, maxBytes = 80_000, stdin = null } = {}) {
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, windowsHide: true });
@@ -68,6 +71,9 @@ function runCommand(command, args, { cwd, timeoutMs = 20_000, maxBytes = 80_000 
       stderr += chunk.toString();
       if (stderr.length > maxBytes) stderr = `${stderr.slice(0, maxBytes)}\n[truncated]`;
     });
+    if (stdin != null) {
+      child.stdin.end(stdin);
+    }
     child.on('error', (error) => {
       clearTimeout(timeout);
       reject(error);
@@ -118,6 +124,91 @@ function classifyHermenFailure(error) {
   if (/Unrepairable tool_call|tool_call arguments|final_response/i.test(message)) return 'tool_call_format';
   if (/exited with/i.test(message)) return 'process_exit';
   return 'unknown';
+}
+
+function extractJsonObject(rawText) {
+  const jsonMatch = String(rawText || '').match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+  try {
+    return JSON.parse(jsonMatch[0]);
+  } catch {
+    return null;
+  }
+}
+
+function quoteCmdArg(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+async function runClaudeManager({ idea, task, mode, repoPath }) {
+  if (!fs.existsSync(claudeExe)) {
+    throw new Error(`Claude executable not found: ${claudeExe}`);
+  }
+  const prompt = `You are Claude CLI acting as lead engineer and prompt manager for Hermen, a local Qwen coding worker.
+
+Your job is planning only. Do not implement. Do not ask to modify files. Produce one compact work order that Hermen can execute without overflowing local context.
+
+Return only JSON with this shape:
+{
+  "status": "ready|blocked",
+  "summary": "one sentence",
+  "harmen_prompt": "compact executable prompt under 3500 characters",
+  "qc_checks": ["verification Codex should run after Hermen"]
+}
+
+Rules:
+- Codex is final QC.
+- Do not create plan files or persistent session artifacts.
+- Keep the Hermen prompt to one focused pass.
+- Do not ask Hermen to read broad directories, node_modules, dist, build output, or unrelated files.
+- If the request needs multiple passes, set status to "blocked" and make harmen_prompt the first safe pass only.
+- For brief mode, Harmen must inspect/recommend only.
+- For implement mode, Harmen may edit only when the assigned task explicitly asks for implementation.
+
+Repository:
+${repoPath}
+
+Mode:
+${mode}
+
+Product/request:
+${idea}
+
+Assigned task:
+${task.title}
+
+Routing reason:
+${task.reason || 'No reason supplied.'}`;
+  const commandLine = [
+    'claude',
+    '-p',
+    '--model',
+    claudeManagerModel,
+    '--permission-mode',
+    'default',
+    '--max-budget-usd',
+    '0.75'
+  ].join(' ');
+  const result = await runCommand(process.env.ComSpec || 'cmd.exe', ['/d', '/c', commandLine], {
+    cwd: repoPath,
+    timeoutMs: claudeManagerTimeoutMs,
+    maxBytes: 40_000,
+    stdin: prompt
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || `Claude manager exited with ${result.exitCode}`);
+  }
+  const parsed = extractJsonObject(result.stdout);
+  const fallbackPrompt = String(result.stdout || '').trim().slice(0, 5000);
+  return {
+    raw: result.stdout,
+    status: parsed?.status || 'ready',
+    summary: parsed?.summary || fallbackPrompt.split(/\r?\n/).find(Boolean) || '',
+    harmenPrompt: String(parsed?.harmen_prompt || fallbackPrompt).slice(0, 5000),
+    qcChecks: Array.isArray(parsed?.qc_checks) ? parsed.qc_checks.slice(0, 8) : ['Review Hermen output', 'Review git diff', 'Run focused verification'],
+    durationMs: result.durationMs,
+    createdAt: new Date().toISOString()
+  };
 }
 
 async function git(repoPath, args, options = {}) {
@@ -530,6 +621,7 @@ const server = http.createServer(async (req, res) => {
         allowedRoots,
         memoryPath,
         hermes: fs.existsSync(hermesExe) ? 'available' : 'missing',
+        claude: fs.existsSync(claudeExe) ? 'available' : 'missing',
         port
       });
       return;
@@ -592,6 +684,18 @@ const server = http.createServer(async (req, res) => {
         status: runError ? 'partial_or_failed' : changedFileLimitExceeded ? 'needs_review' : 'completed'
       };
       sendJson(res, runError ? 500 : 200, payload);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/worker/claude-manager') {
+      const { idea, task, mode = 'brief', repo } = await readJsonBody(req);
+      if (!idea || !task?.title) {
+        sendJson(res, 400, { error: 'idea and task.title are required.' });
+        return;
+      }
+      const repoPath = resolveRepo(repo || defaultRepo);
+      const result = await runClaudeManager({ idea, task, mode, repoPath });
+      sendJson(res, 200, { ...result, repoPath });
       return;
     }
 
