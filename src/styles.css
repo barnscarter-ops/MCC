@@ -1048,7 +1048,7 @@ body {
 
 .modelOps {
   grid-column: span 6;
-  min-height: 252px;
+  min-height: 328px;
 }
 
 .network {
@@ -1298,6 +1298,101 @@ body {
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.aiRuntimeGrid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: .9fr 1.6fr;
+  gap: 8px;
+  margin-top: 8px;
+  font-family: "Barlow Condensed", Inter, sans-serif;
+}
+
+.claudeMgrChip,
+.promptMetaPanel {
+  min-height: 74px;
+  padding: 9px;
+  background: #11131a;
+  border-radius: 3px;
+}
+
+.claudeMgrChip {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  border-left: 3px solid var(--red);
+}
+
+.claudeMgrChip.ok {
+  border-left-color: var(--green);
+}
+
+.claudeMgrChip.loading {
+  border-left-color: #d9bf6f;
+}
+
+.claudeMgrChip span,
+.claudeMgrChip strong,
+.claudeMgrChip em,
+.promptMetaGrid span,
+.promptMetaGrid strong {
+  display: block;
+  line-height: 1;
+}
+
+.claudeMgrChip span,
+.promptMetaGrid span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+
+.claudeMgrChip strong {
+  color: #f0f2f4;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.claudeMgrChip em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.promptMetaGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.promptMetaGrid div {
+  min-width: 0;
+}
+
+.promptMetaGrid strong {
+  margin-top: 5px;
+  overflow: hidden;
+  color: #f0f2f4;
+  font-size: 16px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.promptMetricStatus {
+  margin-top: 8px;
+  color: var(--red);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .05em;
+}
+
+.promptMetricStatus.online {
+  color: var(--green);
 }
 
 .driveBlock {
@@ -1853,6 +1948,8 @@ body {
   .serverGrid,
   .modelOpsGrid,
   .modelMetaGrid,
+  .aiRuntimeGrid,
+  .promptMetaGrid,
   .storageGrid,
   .deviceDetails {
     grid-template-columns: repeat(2, 1fr);

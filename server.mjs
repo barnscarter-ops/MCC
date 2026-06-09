@@ -617,42 +617,86 @@ async function proxyPrometheus(req, res, url) {
 async function getLlamaStatus(res) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2500);
+  let modelData = null;
+  let modelState = 'offline';
+  let modelError = null;
   try {
     const response = await fetch(new URL('/v1/models', llamaServerUrl), {
       signal: controller.signal,
       headers: { accept: 'application/json' }
     });
     const payload = await response.json();
-    const model = payload?.data?.[0] || payload?.models?.[0] || null;
-    send(
-      res,
-      response.ok ? 200 : response.status,
-      JSON.stringify({
-        state: response.ok && model ? 'online' : 'error',
-        model: model?.id || model?.name || model?.model || null,
-        contextTokens: model?.meta?.n_ctx ?? null,
-        parameterCount: model?.meta?.n_params ?? null,
-        endpoint: llamaServerUrl
-      }),
-      'application/json; charset=utf-8'
-    );
+    modelData = payload?.data?.[0] || payload?.models?.[0] || null;
+    modelState = response.ok && modelData ? 'online' : 'error';
+    modelError = response.ok ? null : `llama-server status returned ${response.status}`;
   } catch (error) {
-    send(
-      res,
-      200,
-      JSON.stringify({
-        state: 'offline',
-        model: null,
-        contextTokens: null,
-        parameterCount: null,
-        endpoint: llamaServerUrl,
-        error: error.name === 'AbortError' ? 'llama-server status timed out' : error.message
-      }),
-      'application/json; charset=utf-8'
-    );
+    modelState = 'offline';
+    modelError = error.name === 'AbortError' ? 'llama-server status timed out' : error.message;
   } finally {
     clearTimeout(timeout);
   }
+
+  let evalSpeed = null;
+  let promptTokensTotal = null;
+  let outputTokensTotal = null;
+  let genSpeed = null;
+  let promptMetricsSource = 'unavailable';
+  let promptMetricsError = 'llama.cpp runtime metrics are not exposed';
+  try {
+    const psController = new AbortController();
+    const psTimeout = setTimeout(() => psController.abort(), 1500);
+    let psPayload = null;
+    try {
+      const psResponse = await fetch(new URL('/api/ps', llamaServerUrl), {
+        signal: psController.signal,
+        headers: { accept: 'application/json' }
+      });
+      if (psResponse.ok) {
+        psPayload = await psResponse.json();
+      } else {
+        promptMetricsError = `/api/ps returned ${psResponse.status}`;
+      }
+    } finally {
+      clearTimeout(psTimeout);
+    }
+    if (psPayload) {
+      const modelId = modelData?.id || modelData?.name || '';
+      const models = psPayload?.models;
+      if (Array.isArray(models)) {
+        const m = models.find((mm) => mm?.model === modelId || mm?.model?.endsWith(modelId.split('/').pop())) || models[0];
+        if (m) {
+          evalSpeed = m.prompt_eval_count && m.prompt_eval_duration ? Math.round((m.prompt_eval_count / (m.prompt_eval_duration / 1000)) * 10) / 10 : null;
+          genSpeed = m.eval_count && m.eval_duration ? Math.round((m.eval_count / (m.eval_duration / 1000)) * 10) / 10 : null;
+          promptTokensTotal = m.prompt_eval_count ?? null;
+          outputTokensTotal = m.eval_count ?? null;
+          promptMetricsSource = 'llama-api-ps';
+          promptMetricsError = null;
+        }
+      }
+    }
+  } catch (psError) {
+    promptMetricsError = psError.name === 'AbortError' ? '/api/ps timed out' : psError.message;
+  }
+
+  send(
+    res,
+    200,
+    JSON.stringify({
+      state: modelState,
+      model: modelData?.id || modelData?.name || modelData?.model || null,
+      contextTokens: modelData?.meta?.n_ctx ?? null,
+      parameterCount: modelData?.meta?.n_params ?? null,
+      endpoint: llamaServerUrl,
+      evalSpeed,
+      promptTokensTotal,
+      outputTokensTotal,
+      genSpeed,
+      promptMetricsSource,
+      promptMetricsError,
+      error: modelError
+    }),
+    'application/json; charset=utf-8'
+  );
 }
 
 async function getOrchestratorStatus(res) {

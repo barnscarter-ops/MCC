@@ -238,7 +238,7 @@ function Workstation({ metrics }) {
   );
 }
 
-function ModelOps({ metrics, modelStatus }) {
+function ModelOps({ metrics, modelStatus, orchestratorStatus }) {
   const gpuMemUsedGb = formatGbFromBytes(metrics.pcGpuMemUsedBytes);
   const gpuMemTotalGb = formatGbFromBytes(metrics.pcGpuMemTotalBytes);
   const gpuMemPercent = metrics.pcGpuMemUsedBytes && metrics.pcGpuMemTotalBytes
@@ -251,6 +251,13 @@ function ModelOps({ metrics, modelStatus }) {
     : gpuLoad != null && gpuLoad >= 10
       ? 'GENERATING'
       : 'LOADED / IDLE';
+  const { evalSpeed, promptTokensTotal, outputTokensTotal, genSpeed } = modelStatus;
+  const claudeWorker = (orchestratorStatus.workers || []).find((worker) => worker.id === 'claude-cli');
+  const claudeState = claudeWorker?.state || 'loading';
+  const claudeReady = /ready|online|available|manual/i.test(claudeState);
+  const promptMetricsLive = modelStatus.promptMetricsSource && modelStatus.promptMetricsSource !== 'unavailable';
+  const formatTokenMetric = (value) => value == null ? '--' : value.toLocaleString();
+  const formatSpeedMetric = (value) => value == null ? '--' : `${Number(value).toFixed(1)} t/s`;
 
   return (
     <Panel title="LOCAL AI CORE" className="modelOps">
@@ -288,6 +295,36 @@ function ModelOps({ metrics, modelStatus }) {
         <div>
           <span>ENDPOINT</span>
           <strong>{modelStatus.endpoint || 'UNLINKED'}</strong>
+        </div>
+      </div>
+      <div className="aiRuntimeGrid">
+        <div className={`claudeMgrChip ${claudeReady ? 'ok' : claudeState === 'loading' ? 'loading' : 'offline'}`}>
+          <span>CLAUDE MGR</span>
+          <strong>{claudeReady ? 'READY' : claudeState.toUpperCase()}</strong>
+          <em>HERMEN PROMPT QC</em>
+        </div>
+        <div className="promptMetaPanel">
+          <div className="promptMetaGrid">
+            <div>
+              <span>EVAL</span>
+              <strong>{formatSpeedMetric(evalSpeed)}</strong>
+            </div>
+            <div>
+              <span>GEN</span>
+              <strong>{formatSpeedMetric(genSpeed)}</strong>
+            </div>
+            <div>
+              <span>PROMPT</span>
+              <strong>{formatTokenMetric(promptTokensTotal)}</strong>
+            </div>
+            <div>
+              <span>OUTPUT</span>
+              <strong>{formatTokenMetric(outputTokensTotal)}</strong>
+            </div>
+          </div>
+          <div className={`promptMetricStatus ${promptMetricsLive ? 'online' : 'offline'}`}>
+            {promptMetricsLive ? 'LIVE LLAMA METRICS' : 'LLAMA METRICS OFF'}
+          </div>
         </div>
       </div>
     </Panel>
@@ -1084,6 +1121,7 @@ function HomePage({ modelStatus }) {
 
 function App() {
   const modelStatus = useModelStatus();
+  const orchestratorStatus = useOrchestratorStatus();
   const { metrics, status } = useMetrics();
   const [view, setView] = useState('home');
   return (
@@ -1095,7 +1133,7 @@ function App() {
         ) : view === 'hardware' ? (
           <div className="mainGrid">
             <Workstation metrics={metrics} />
-            <ModelOps metrics={metrics} modelStatus={modelStatus} />
+            <ModelOps metrics={metrics} modelStatus={modelStatus} orchestratorStatus={orchestratorStatus} />
             <Network metrics={metrics} />
             <Server metrics={metrics} />
             <Storage metrics={metrics} />
