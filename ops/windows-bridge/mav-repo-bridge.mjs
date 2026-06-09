@@ -276,6 +276,38 @@ function workflowCountsFromStatus(statusPayload, fallbackCounts) {
   };
 }
 
+function completedTaskIds(statusPayload) {
+  const tasks = statusPayload?.summary?.tasks || [];
+  return new Set(tasks
+    .filter((task) => {
+      const status = String(task.status || '').toUpperCase();
+      const definition = String(task.definition_of_done || '').toUpperCase();
+      return ['COMPLETE', 'COMPLETED', 'VERIFIED'].includes(status) && definition === 'YES';
+    })
+    .map((task) => String(task.id || '').toUpperCase())
+    .filter(Boolean));
+}
+
+function pendingOwnerSignoffs(statusPayload, doneTaskIds) {
+  return (statusPayload?.summary?.owner_signoffs_needed || [])
+    .filter((item) => {
+      const taskId = String(item).match(/\bT\d{3}\b/i)?.[0]?.toUpperCase();
+      return !taskId || !doneTaskIds.has(taskId);
+    });
+}
+
+function pendingQueueHeadings(queueReport, doneTaskIds) {
+  if (!queueReport) return [];
+  return extractHeadings(queueReport.text, 5)
+    .filter((heading) => {
+      const taskId = String(heading).match(/\bT\d{3}\b/i)?.[0]?.toUpperCase();
+      if (taskId) return !doneTaskIds.has(taskId);
+      if (/repair contact form|fix broken contact form/i.test(String(heading)) && doneTaskIds.has('T002')) return false;
+      if (/^Execution Queue$/i.test(String(heading))) return false;
+      return true;
+    });
+}
+
 function loadSeoWorkflow() {
   const outputsDir = path.join(seoAppPath, 'outputs');
   if (!fs.existsSync(outputsDir)) {
@@ -342,6 +374,8 @@ function loadSeoWorkflow() {
   if (/\bBLOCKED\b/i.test(finalReport?.text || '')) faults.push('Final report contains blocked work');
   if (/\bNEEDS PHOTO\b/i.test(scheduleReport?.text || '')) faults.push('GBP schedule contains photo gaps');
   if (workflowStatus?.error) faults.push(workflowStatus.error);
+  const doneTaskIds = completedTaskIds(workflowStatus);
+  const ownerSignoffs = pendingOwnerSignoffs(workflowStatus, doneTaskIds);
 
   return {
     state: 'online',
@@ -360,11 +394,11 @@ function loadSeoWorkflow() {
     },
     workflowStatus,
     nextAction: workflowStatus?.next_action || null,
-    ownerSignoffs: workflowStatus?.summary?.owner_signoffs_needed || [],
+    ownerSignoffs,
     taskSummary: workflowStatus?.summary || null,
     upcomingActions: [
-      ...(workflowStatus?.summary?.owner_signoffs_needed || []),
-      ...(queueReport ? extractHeadings(queueReport.text, 5) : []),
+      ...ownerSignoffs,
+      ...pendingQueueHeadings(queueReport, doneTaskIds),
       ...(scheduleReport ? extractHeadings(scheduleReport.text, 3) : [])
     ].slice(0, 8),
     faults,
