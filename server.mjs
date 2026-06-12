@@ -13,7 +13,7 @@ const localModel = process.env.LOCAL_MODEL || 'qwen3-14b';
 const repoBridgeUrl = process.env.MAV_REPO_BRIDGE_URL || '';
 const geminiApiKey = process.env.GEMINI_API_KEY || '';
 const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-const GEMINI_MODES = new Set(['ask', 'review']);
+const GEMINI_MODES = new Set(['review']); // Gemini = everyday chat only (REVIEW mode)
 const dataDir = process.env.MAV_CONSOLE_DATA_DIR || path.join(__dirname, '.mav-console');
 const ledgerFile = path.join(dataDir, 'task-runs.json');
 const workspacePath = process.env.MAV_CONSOLE_WORKSPACE || __dirname;
@@ -995,28 +995,7 @@ async function handleBuildOrchestration(res, controller, prompt, histMsgs, ctxBl
     sseWrite(res, `[Execution error: ${err.message}]\n`);
   }
 
-  // Step 3: QC (Gemini, if key available)
-  if (geminiApiKey && execText && !controller.signal.aborted) {
-    sseWrite(res, '\n\n---\n**[QC REVIEW — GEMINI]**\n\n');
-    try {
-      const qcUp = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'content-type': 'application/json', 'Authorization': `Bearer ${geminiApiKey}` },
-        body: JSON.stringify({
-          model: geminiModel,
-          messages: [
-            { role: 'system', content: 'You are a senior code reviewer. Review this implementation for correctness, edge cases, and critical issues. Be concise — 3-5 bullet points.' },
-            { role: 'user', content: `Task: ${prompt}\n\nImplementation:\n${execText.slice(0, 3000)}\n\nQC review:` }
-          ],
-          stream: true, temperature: 0.3, max_tokens: 500
-        })
-      });
-      if (qcUp.ok) await streamUpstream(qcUp, d => sseWrite(res, d));
-    } catch (err) {
-      if (err.name !== 'AbortError') sseWrite(res, `[QC error: ${err.message}]\n`);
-    }
-  }
+  // Step 3: QC — reserved for Codex (not yet wired)
 
   res.write('data: [DONE]\n\n');
   res.end();
@@ -1057,7 +1036,7 @@ async function handleChat(req, res) {
     const controller = new AbortController();
     req.on('close', () => controller.abort());
 
-    // BUILD mode → orchestrated plan → execute → QC
+    // BUILD mode → Qwen plan → Qwen execute (Codex QC reserved)
     if (mode === 'build') {
       await handleBuildOrchestration(res, controller, prompt.trim(), histMsgs, ctxBlock);
       return;
