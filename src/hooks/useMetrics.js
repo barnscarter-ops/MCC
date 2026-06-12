@@ -165,12 +165,14 @@ export function useOrchestratorStatus() {
 
 async function fetchSeoFromSupabase() {
   if (!supabase) throw new Error('no supabase');
-  const [runsRes, postsRes] = await Promise.all([
+  const [runsRes, postsRes, tasksRes] = await Promise.all([
     supabase.from('seo_runs').select('*').order('created_at', { ascending: false }).limit(20),
     supabase.from('weekly_posts').select('platform,status,service').order('created_at', { ascending: false }).limit(100),
+    supabase.from('website_tasks').select('status').eq('status', 'pending_approval').limit(100),
   ]);
   const runs = runsRes.data || [];
   const posts = postsRes.data || [];
+  const pendingTaskCount = (tasksRes.data || []).length;
   const latest = runs[0] || null;
 
   const statusCounts = { complete: 0, partial: 0, blocked: 0, incomplete: 0 };
@@ -183,18 +185,18 @@ async function fetchSeoFromSupabase() {
 
   const pendingPosts = posts.filter(p => p.status === 'pending_approval');
   const actionSummary = {
-    needs_approval: pendingPosts.length,
+    needs_approval: pendingPosts.length + pendingTaskCount,
     blocked_access: posts.filter(p => p.status === 'error').length,
   };
 
   const reports = runs
-    .filter(r => r.status === 'done' || r.status === 'posted')
+    .filter(r => ['done', 'posted', 'pending_approval', 'approved'].includes(r.status))
     .map(r => ({
       id: r.id,
       date: r.created_at,
-      status: 'complete',
+      status: r.status === 'pending_approval' ? 'needs_approval' : 'complete',
       source: 'supabase',
-      label: `Run ${r.id?.slice(0, 8) || '?'}`,
+      label: `Run ${r.week_of || r.id?.slice(0, 8) || '?'}`,
     }));
 
   const faults = runs
