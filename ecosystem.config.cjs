@@ -1,3 +1,5 @@
+require('dotenv').config({ path: 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard\\.env' });
+
 module.exports = {
   apps: [
     {

@@ -3346,6 +3346,86 @@ body {
   border-color: rgba(102, 212, 255, .45);
 }
 
+/* --- Attach feature --- */
+.attachBtn {
+  border: 1px solid rgba(102, 212, 255, .25);
+  border-radius: 2px;
+  padding: 4px 10px;
+  background: transparent;
+  color: rgba(102, 212, 255, .6);
+  font-family: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+.attachBtn:hover { color: var(--cyan); border-color: rgba(102, 212, 255, .5); }
+.attachBtn.compact { padding: 4px 7px; font-size: 0.85rem; }
+
+.attachChips, .barChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 10px 0;
+}
+.attachChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(102, 212, 255, .08);
+  border: 1px solid rgba(102, 212, 255, .22);
+  border-radius: 2px;
+  padding: 2px 6px;
+  font-size: 0.68rem;
+  color: var(--cyan);
+  max-width: 200px;
+}
+.attachChipLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachChipRemove {
+  background: none;
+  border: none;
+  color: rgba(102, 212, 255, .5);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0;
+}
+.attachChipRemove:hover { color: var(--cyan); }
+
+.pathInputRow {
+  display: flex;
+  gap: 4px;
+  padding: 4px 10px;
+}
+.pathInput {
+  flex: 1;
+  background: rgba(0,0,0,.35);
+  border: 1px solid rgba(102, 212, 255, .28);
+  border-radius: 2px;
+  color: var(--cyan);
+  font-family: inherit;
+  font-size: 0.72rem;
+  padding: 4px 8px;
+  outline: none;
+}
+.pathInput:focus { border-color: rgba(102, 212, 255, .55); }
+.pathAddBtn, .pathCancelBtn {
+  border: 1px solid rgba(102, 212, 255, .22);
+  border-radius: 2px;
+  background: transparent;
+  color: rgba(102, 212, 255, .6);
+  font-family: inherit;
+  font-size: 0.7rem;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.pathAddBtn:hover { color: var(--cyan); border-color: rgba(102, 212, 255, .5); }
+.pathCancelBtn:hover { color: #ff6b6b; border-color: rgba(255,107,107,.4); }
+
 .modelRouteBadge {
   margin-left: auto;
   padding: 4px 10px;
@@ -3434,7 +3514,8 @@ body {
   position: relative;
   z-index: 1;
   flex: 1;
-  max-height: 340px;
+  min-height: 120px;
+  max-height: 52vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -4298,4 +4379,45 @@ body {
 
 .mdSpacer {
   height: 6px;
+}
+
+.applyStagedWrap {
+  display: block;
+  margin-top: 6px;
+}
+
+.applyStagedBtn {
+  border: 1px solid rgba(255, 178, 64, .50);
+  border-radius: 2px;
+  padding: 5px 12px;
+  background: rgba(255, 178, 64, .12);
+  color: var(--amber, #ffb240);
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  cursor: pointer;
+}
+
+.applyStagedBtn:hover:not(:disabled) {
+  background: rgba(255, 178, 64, .22);
+  box-shadow: 0 0 8px rgba(255, 178, 64, .25);
+}
+
+.applyStagedBtn:disabled {
+  opacity: .45;
+  cursor: wait;
+}
+
+.applyStagedDone {
+  display: block;
+  margin-top: 6px;
+  color: var(--green, #6fd587);
+  font-size: 0.72rem;
+}
+
+.applyStagedErr {
+  margin-left: 8px;
+  color: var(--red, #c75050);
+  font-size: 0.72rem;
 }

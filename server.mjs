@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,7 +17,8 @@ const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const GEMINI_MODES = new Set(['review']); // Gemini = everyday chat only (REVIEW mode)
 const openAiApiKey = process.env.OPENAI_API_KEY || '';
 const nimApiKey = process.env.NVIDIA_NIM_API_KEY || '';
-const nimModel = 'qwen/qwen2.5-coder-32b-instruct';
+// qwen2.5-coder-32b was retired from the NIM catalog (HTTP 410) — keep this overridable
+const nimModel = process.env.NIM_MODEL || 'qwen/qwen3.5-122b-a10b';
 const dataDir = process.env.MAV_CONSOLE_DATA_DIR || path.join(__dirname, '.mav-console');
 const ledgerFile = path.join(dataDir, 'task-runs.json');
 const workspacePath = process.env.MAV_CONSOLE_WORKSPACE || __dirname;
@@ -313,7 +315,7 @@ async function readJsonBody(req) {
   let body = '';
   for await (const chunk of req) {
     body += chunk;
-    if (body.length > 64_000) throw new Error('Request body too large');
+    if (body.length > 512_000) throw new Error('Request body too large');
   }
   return body ? JSON.parse(body) : {};
 }
@@ -952,36 +954,208 @@ async function streamUpstream(upstream, onToken) {
   return collected;
 }
 
-async function handleBuildOrchestration(res, controller, prompt, histMsgs, ctxBlock) {
-  async function callOpenAI(messages, maxTokens, temp) {
-    return fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'content-type': 'application/json', 'Authorization': `Bearer ${openAiApiKey}` },
-      body: JSON.stringify({ model: 'gpt-4o', messages, stream: true, temperature: temp, max_tokens: maxTokens })
-    });
-  }
+// ---------- BUILD pipeline: staged file changes + executor tools ----------
 
-  async function callQwen(messages, maxTokens, temp) {
-    return fetch(new URL('/v1/chat/completions', llamaServerUrl), {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-      body: JSON.stringify({ model: localModel, messages, stream: true, temperature: temp, max_tokens: maxTokens })
-    });
-  }
+const stagingRoot = path.join(__dirname, 'tmp', 'build-staging');
+const backupRoot = path.join(__dirname, 'tmp', 'build-backup');
+const BLOCKED_REL = /^(\.env|\.git(\/|$)|node_modules(\/|$)|package-lock\.json$|tmp(\/|$)|\.mav-console(\/|$))/i;
 
-  // Step 1: Plan (GPT-4o)
+function safeRelPath(rel) {
+  if (!rel || typeof rel !== 'string') return null;
+  const norm = path.normalize(rel.trim()).replace(/^[/\\]+/, '');
+  if (path.isAbsolute(norm) || norm.split(/[/\\]/).includes('..')) return null;
+  if (BLOCKED_REL.test(norm.replace(/\\/g, '/'))) return null;
+  return norm;
+}
+
+function workspaceTree() {
+  const lines = [];
+  const skip = new Set(['node_modules', '.git', 'dist', 'tmp', '.mav-console', '.venv']);
+  const walk = (dir, prefix, depth) => {
+    if (depth > 2 || lines.length >= 80) return;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (skip.has(e.name) || lines.length >= 80) continue;
+      lines.push(prefix + e.name + (e.isDirectory() ? '/' : ''));
+      if (e.isDirectory()) walk(path.join(dir, e.name), prefix + e.name + '/', depth + 1);
+    }
+  };
+  walk(workspacePath, '', 0);
+  return lines.join('\n');
+}
+
+const EXEC_TOOLS = [
+  { type: 'function', function: { name: 'list_dir', description: 'List files in a workspace directory (non-recursive). Directories end with /.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Relative directory path; "." for workspace root.' } }, required: [] } } },
+  { type: 'function', function: { name: 'read_file', description: 'Read a text file from the workspace. Returns up to 6000 characters per call; use offset to continue.', parameters: { type: 'object', properties: { path: { type: 'string' }, offset: { type: 'number', description: 'Character offset to start from (default 0).' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'write_file', description: 'Stage a new version of a file for human review (nothing is written to the workspace directly). Content MUST be the complete file, never a fragment or snippet.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
+  { type: 'function', function: { name: 'run_command', description: 'Run an allowlisted terminal command in the workspace root. Allowed: "node --check <file>", "node -v", "npm run build", "npm test", "npx vitest run [args]", "git status|diff|log [args]". No shell operators (| ; && > etc). NOTE: commands see the REAL workspace — your staged write_file changes are NOT included until the human applies them.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } }
+];
+
+const ALLOWED_COMMANDS = [
+  /^node --check [\w./\\-]+$/,
+  /^node -v$/,
+  /^npm run build$/,
+  /^npm test(\s|$)/,
+  /^npx vitest run(\s|$)/,
+  /^git (status|diff|log)(\s|$)/
+];
+
+function runShellCommand(command) {
+  return new Promise((resolve) => {
+    const child = spawn('cmd.exe', ['/d', '/s', '/c', command], { cwd: workspacePath });
+    let out = '';
+    let killed = false;
+    const timer = setTimeout(() => { killed = true; child.kill(); }, 120_000);
+    child.stdout.on('data', (d) => { if (out.length < 8000) out += d; });
+    child.stderr.on('data', (d) => { if (out.length < 8000) out += d; });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(`exit code: ${code}${killed ? ' (killed after 120s)' : ''}\n${out.slice(0, 6000) || '(no output)'}`);
+    });
+    child.on('error', (err) => { clearTimeout(timer); resolve(`ERROR: ${err.message}`); });
+  });
+}
+
+async function runExecTool(name, args, staged) {
+  if (name === 'run_command') {
+    const cmd = String(args.command || '').trim();
+    if (/[;&|<>`$^%]/.test(cmd)) return 'ERROR: shell operators are not allowed';
+    if (!ALLOWED_COMMANDS.some((re) => re.test(cmd))) {
+      return 'ERROR: command not on the allowlist. Allowed: node --check <file>, node -v, npm run build, npm test, npx vitest run, git status/diff/log.';
+    }
+    return runShellCommand(cmd);
+  }
+  if (name === 'list_dir') {
+    const rel = safeRelPath(args.path || '.');
+    if (rel === null) return 'ERROR: path not allowed';
+    try {
+      const entries = fs.readdirSync(path.join(workspacePath, rel), { withFileTypes: true });
+      return entries
+        .filter((e) => !['node_modules', '.git', 'dist', 'tmp', '.mav-console'].includes(e.name))
+        .slice(0, 100)
+        .map((e) => e.name + (e.isDirectory() ? '/' : ''))
+        .join('\n') || '(empty)';
+    } catch (error) {
+      return `ERROR: ${error.message}`;
+    }
+  }
+  if (name === 'read_file') {
+    const rel = safeRelPath(args.path);
+    if (rel === null) return 'ERROR: path not allowed';
+    const stagedFile = staged.files.find((f) => f.path === rel);
+    let text;
+    if (stagedFile) {
+      text = stagedFile.content;
+    } else {
+      try { text = fs.readFileSync(path.join(workspacePath, rel), 'utf8'); }
+      catch (error) { return `ERROR: ${error.message}`; }
+    }
+    const offset = Math.max(0, Number(args.offset) || 0);
+    const slice = text.slice(offset, offset + 6000);
+    staged.readPaths.add(rel);
+    return text.length > offset + 6000
+      ? `${slice}\n...[truncated, file is ${text.length} chars — call read_file with offset=${offset + 6000} for the rest]`
+      : slice;
+  }
+  if (name === 'write_file') {
+    const rel = safeRelPath(args.path);
+    if (rel === null) return 'ERROR: path not allowed';
+    if (typeof args.content !== 'string' || !args.content.trim()) return 'ERROR: content is required';
+    const target = path.join(workspacePath, rel);
+    // Guard against the model replacing a real file with a fragment
+    try {
+      const oldSize = fs.statSync(target).size;
+      if (oldSize > 400 && args.content.length < oldSize * 0.3) {
+        return `REJECTED: ${rel} is ${oldSize} bytes but your content is only ${args.content.length} chars. write_file requires the COMPLETE updated file — read_file it first, then resubmit the whole file with your change merged in.`;
+      }
+      if (!staged.readPaths.has(rel)) {
+        return `REJECTED: ${rel} already exists — read_file it before writing so your version preserves existing code.`;
+      }
+    } catch {}
+    const index = staged.files.findIndex((f) => f.path === rel);
+    const entry = { path: rel, content: args.content };
+    if (index >= 0) staged.files[index] = entry; else staged.files.push(entry);
+    return `STAGED ${rel} (${args.content.length} chars). It will be applied to the workspace after human review.`;
+  }
+  return `ERROR: unknown tool ${name}`;
+}
+
+function persistStagedRun(staged) {
+  const dir = path.join(stagingRoot, staged.id);
+  for (const f of staged.files) {
+    const target = path.join(dir, 'files', f.path);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, f.content);
+  }
+  fs.writeFileSync(
+    path.join(dir, 'manifest.json'),
+    JSON.stringify({ id: staged.id, createdAt: new Date().toISOString(), prompt: staged.prompt, files: staged.files.map((f) => ({ path: f.path, chars: f.content.length })) }, null, 2)
+  );
+}
+
+async function applyStagedRun(req, res) {
+  try {
+    const { id } = await readJsonBody(req);
+    if (!/^stage-[\w-]+$/.test(id || '')) {
+      sendJson(res, 400, { error: 'Valid stage id is required.' });
+      return;
+    }
+    const dir = path.join(stagingRoot, id);
+    const manifestFile = path.join(dir, 'manifest.json');
+    if (!fs.existsSync(manifestFile)) {
+      sendJson(res, 404, { error: 'Staged run not found.' });
+      return;
+    }
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+    if (manifest.appliedAt) {
+      sendJson(res, 409, { error: `Already applied at ${manifest.appliedAt}.` });
+      return;
+    }
+    const backupDir = path.join(backupRoot, id);
+    const applied = [];
+    for (const f of manifest.files) {
+      const rel = safeRelPath(f.path);
+      if (!rel) continue;
+      const src = path.join(dir, 'files', rel);
+      if (!fs.existsSync(src)) continue;
+      const dest = path.join(workspacePath, rel);
+      if (fs.existsSync(dest)) {
+        const bak = path.join(backupDir, rel);
+        fs.mkdirSync(path.dirname(bak), { recursive: true });
+        fs.copyFileSync(dest, bak);
+      }
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+      applied.push(rel);
+    }
+    manifest.appliedAt = new Date().toISOString();
+    fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
+    sendJson(res, 200, { ok: true, applied, backupDir });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleBuildOrchestration(res, controller, prompt, histMsgs, ctxBlock, attachBlock = '') {
+  const recentHist = histMsgs.slice(-6);
+
+  // Step 1: Plan (GPT-4o) — grounded in the real workspace tree + attached files
   sseWrite(res, '\n**[PLANNING — GPT-4o]**\n\n');
   const planMessages = [
-    { role: 'system', content: `You are a senior software architect. Analyze the task and produce a tight, numbered implementation plan. Specify exact files to create or modify, key functions/APIs involved, and the technical approach. Be concise — no code, no filler, just a clear actionable plan.${ctxBlock}` },
-    ...histMsgs,
+    { role: 'system', content: `You are a senior software architect. Produce a tight, numbered implementation plan for the executor agent. Specify exact files to modify or create, key functions/APIs involved, and the technical approach. Only reference files that exist in the workspace tree below (or clearly mark new files as NEW). Be concise — no code, no filler.\n\nWORKSPACE FILE TREE:\n${workspaceTree()}${attachBlock}${ctxBlock}` },
+    ...recentHist,
     { role: 'user', content: `Create an implementation plan for:\n\n${prompt}` }
   ];
   let planText = '';
   try {
-    const up = await callOpenAI(planMessages, 600, 0.3);
-    if (up.ok) planText = await streamUpstream(up, d => sseWrite(res, d));
+    const up = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'content-type': 'application/json', 'Authorization': `Bearer ${openAiApiKey}` },
+      body: JSON.stringify({ model: 'gpt-4o', messages: planMessages, stream: true, temperature: 0.3, max_tokens: 700 })
+    });
+    if (up.ok) planText = await streamUpstream(up, (d) => sseWrite(res, d));
     else sseWrite(res, `[Planning failed: ${up.status}]\n`);
   } catch (err) {
     if (err.name === 'AbortError') { res.write('data: [DONE]\n\n'); res.end(); return; }
@@ -990,59 +1164,115 @@ async function handleBuildOrchestration(res, controller, prompt, histMsgs, ctxBl
 
   if (!planText || controller.signal.aborted) { res.write('data: [DONE]\n\n'); res.end(); return; }
 
-  // Step 2: Execute (Qwen local)
-  sseWrite(res, '\n\n---\n**[EXECUTING — QWEN LOCAL]**\n\n');
+  // Step 2: Execute (Qwen local, tool-calling agent loop; changes are staged, never written directly)
+  sseWrite(res, '\n\n---\n**[EXECUTING — QWEN LOCAL + TOOLS]**\n\n');
+  const staged = { id: `stage-${Date.now()}`, prompt, files: [], readPaths: new Set() };
   const execMessages = [
-    { role: 'system', content: `You are a senior engineer executing a plan. Write complete, working code. Follow the plan exactly. No commentary — only code and necessary file changes.${ctxBlock}` },
-    ...histMsgs,
-    { role: 'user', content: `Task: ${prompt}\n\nPlan:\n${planText}\n\nImplement this now.` }
+    { role: 'system', content: `You are a coding agent working inside an existing workspace. You have tools: list_dir, read_file, write_file, run_command.\nRules:\n- ALWAYS read_file before modifying an existing file; write_file content must be the COMPLETE updated file.\n- Make the minimal change that satisfies the plan. Do not refactor unrelated code.\n- Use run_command for syntax checks, tests, builds, and git inspection. Commands see the real workspace, not your staged changes.\n- When the plan is implemented, stop calling tools and reply with a short summary of what you changed (no code).${attachBlock}` },
+    { role: 'user', content: `Task: ${prompt}\n\nPlan from architect:\n${planText.slice(0, 3000)}\n\nImplement this now using your tools.` }
   ];
-  let execText = '';
-  try {
-    const up = await callQwen(execMessages, 2000, 0.2);
-    if (up.ok) execText = await streamUpstream(up, d => sseWrite(res, d));
-    else sseWrite(res, `[Execution failed: ${up.status}]\n`);
-  } catch (err) {
-    if (err.name === 'AbortError') { res.write('data: [DONE]\n\n'); res.end(); return; }
-    sseWrite(res, `[Execution error: ${err.message}]\n`);
-  }
-
-  if (!execText || controller.signal.aborted) { res.write('data: [DONE]\n\n'); res.end(); return; }
-
-  // Step 3: QC (NVIDIA NIM — Qwen2.5-Coder-32B)
-  if (nimApiKey) {
-    sseWrite(res, '\n\n---\n**[QC — NIM QWEN2.5-CODER-32B]**\n\n');
+  let execSummary = '';
+  for (let turn = 0; turn < 12 && !controller.signal.aborted; turn++) {
+    let payload;
     try {
-      const qcUp = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      const r = await fetch(new URL('/v1/chat/completions', llamaServerUrl), {
         method: 'POST',
         signal: controller.signal,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: localModel, messages: execMessages, tools: EXEC_TOOLS, tool_choice: 'auto', stream: false, temperature: 0.2, max_tokens: 1600 })
+      });
+      payload = await r.json();
+      if (!r.ok) throw new Error(payload?.error?.message || `status ${r.status}`);
+    } catch (err) {
+      if (err.name === 'AbortError') { res.write('data: [DONE]\n\n'); res.end(); return; }
+      sseWrite(res, `\n[Execution error: ${err.message}]\n`);
+      break;
+    }
+    const msg = payload.choices?.[0]?.message || {};
+    if (Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
+      execMessages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls });
+      for (const call of msg.tool_calls) {
+        let args = {};
+        try { args = JSON.parse(call.function?.arguments || '{}'); } catch {}
+        const result = await runExecTool(call.function?.name, args, staged);
+        const failed = result.startsWith('ERROR') || result.startsWith('REJECTED');
+        sseWrite(res, `→ ${call.function?.name}(${args.path || args.command || ''}) ${failed ? '✗' : '✓'}\n`);
+        execMessages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
+      }
+      continue;
+    }
+    execSummary = msg.content || '';
+    break;
+  }
+  if (execSummary) sseWrite(res, `\n${execSummary}\n`);
+
+  if (controller.signal.aborted) { res.write('data: [DONE]\n\n'); res.end(); return; }
+  if (!staged.files.length) {
+    sseWrite(res, '\n[No file changes were staged — nothing to QC or apply.]\n');
+    res.write('data: [DONE]\n\n');
+    res.end();
+    return;
+  }
+  persistStagedRun(staged);
+
+  // Step 3: QC (NVIDIA NIM) — reviews the actual staged files, hard 60s budget
+  if (nimApiKey) {
+    sseWrite(res, `\n\n---\n**[QC — NIM ${nimModel}]**\n\n`);
+    try {
+      let budget = 9000;
+      const fileBlocks = staged.files.map((f) => {
+        const part = f.content.slice(0, Math.max(0, budget));
+        budget -= part.length;
+        return `### ${f.path}\n${part}`;
+      }).join('\n\n');
+      const qcUp = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+        method: 'POST',
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]),
         headers: { 'content-type': 'application/json', 'Authorization': `Bearer ${nimApiKey}` },
         body: JSON.stringify({
           model: nimModel,
           messages: [
-            { role: 'system', content: 'You are a senior code reviewer. Review the implementation for bugs, edge cases, and correctness. Be concise — 3-5 bullet points max. Flag critical issues only.' },
-            { role: 'user', content: `Task: ${prompt}\n\nPlan:\n${planText}\n\nImplementation:\n${execText.slice(0, 4000)}\n\nQC review:` }
+            { role: 'system', content: 'You are a senior code reviewer. Review the staged file changes for bugs, regressions, and missing pieces relative to the plan. Be concise — 3-5 bullet points max. End with verdict: SHIP or HOLD.' },
+            { role: 'user', content: `Task: ${prompt}\n\nPlan:\n${planText.slice(0, 2000)}\n\nStaged files:\n${fileBlocks}\n\nQC review:` }
           ],
-          stream: true, temperature: 0.2, max_tokens: 400
+          stream: true, temperature: 0.2, max_tokens: 500
         })
       });
-      if (qcUp.ok) await streamUpstream(qcUp, d => sseWrite(res, d));
+      if (qcUp.ok) await streamUpstream(qcUp, (d) => sseWrite(res, d));
       else sseWrite(res, `[QC failed: ${qcUp.status}]\n`);
     } catch (err) {
-      if (err.name !== 'AbortError') sseWrite(res, `[QC error: ${err.message}]\n`);
+      if (err.name === 'TimeoutError') sseWrite(res, '[QC timed out after 60s — review staged files manually.]\n');
+      else if (err.name !== 'AbortError') sseWrite(res, `[QC error: ${err.message}]\n`);
     }
   }
 
+  sseWrite(res, `\n\n[STAGED:${staged.id}] ${staged.files.length} file(s) staged: ${staged.files.map((f) => f.path).join(', ')}. Review above, then APPLY to write to the workspace.\n`);
   res.write('data: [DONE]\n\n');
   res.end();
 }
 
 async function handleChat(req, res) {
   try {
-    const { prompt, mode = 'ask', history = [] } = await readJsonBody(req);
+    const { prompt, mode = 'ask', history = [], attachments = [] } = await readJsonBody(req);
     if (!prompt?.trim()) {
       sendJson(res, 400, { error: 'Prompt is required.' });
       return;
+    }
+
+    let attachBlock = '';
+    const attachList = (Array.isArray(attachments) ? attachments : [])
+      .filter((a) => a?.name && typeof a.content === 'string')
+      .slice(0, 60);
+    if (attachList.length) {
+      let budget = 24_000;
+      const parts = [];
+      for (const a of attachList) {
+        if (budget <= 0) break;
+        const chunk = a.content.slice(0, Math.min(8000, budget));
+        budget -= chunk.length;
+        parts.push(`--- FILE: ${String(a.name).slice(0, 200)} ---\n${chunk}`);
+      }
+      attachBlock = `\n\n--- USER-ATTACHED FILES ---\n${parts.join('\n\n')}\n--- END ATTACHED FILES ---`;
     }
 
     const dashCtx = await buildDashboardContext();
@@ -1072,16 +1302,16 @@ async function handleChat(req, res) {
     const controller = new AbortController();
     req.on('close', () => controller.abort());
 
-    // BUILD + OPS → GPT-4o plan → Qwen execute → NIM QC
+    // BUILD + OPS → GPT-4o plan → Qwen execute (tool calls, staged) → NIM QC
     if (mode === 'build' || mode === 'ops') {
-      await handleBuildOrchestration(res, controller, prompt.trim(), histMsgs, ctxBlock);
+      await handleBuildOrchestration(res, controller, prompt.trim(), histMsgs, ctxBlock, attachBlock);
       return;
     }
 
     // ASK + REVIEW → Gemini Flash (if key set), OPS → local Qwen
     const useGemini = GEMINI_MODES.has(mode) && geminiApiKey;
     const messages = [
-      { role: 'system', content: system },
+      { role: 'system', content: system + attachBlock },
       ...histMsgs,
       { role: 'user', content: prompt.trim() }
     ];
@@ -1202,6 +1432,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/orchestrator/task-run' && req.method === 'PATCH') {
     await updateTaskRun(req, res);
+    return;
+  }
+  if (url.pathname === '/api/build/apply' && req.method === 'POST') {
+    await applyStagedRun(req, res);
     return;
   }
   if (url.pathname === '/health') {

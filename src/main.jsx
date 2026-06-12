@@ -708,24 +708,112 @@ function workerLabel(workerId) {
   return labels[workerId] || workerId?.toUpperCase?.() || 'UNROUTED';
 }
 
-function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse, onStop, onClear, workflowMode, setWorkflowMode }) {
-  const endRef = useRef(null);
+const ATTACH_IGNORE = new Set(['node_modules', '.git', 'dist', '.venv', '__pycache__', '.cache', 'build', '.next', 'tmp']);
+const ATTACH_EXTS = new Set(['.mjs', '.js', '.jsx', '.ts', '.tsx', '.py', '.css', '.json', '.cjs', '.md', '.sh', '.ps1', '.yaml', '.yml']);
+const MAX_FILE_BYTES = 8000;
+const MAX_TOTAL_BYTES = 32000;
+
+async function readFileText(file) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result || '');
+    reader.onerror = () => resolve('[unreadable]');
+    reader.readAsText(file);
+  });
+}
+
+function ApplyStagedButton({ stageId }) {
+  const [state, setState] = useState('idle');
+  const [detail, setDetail] = useState('');
+
+  async function apply() {
+    setState('busy');
+    try {
+      const res = await fetch('/api/build/apply', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: stageId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `status ${res.status}`);
+      setDetail(`Applied: ${data.applied.join(', ')}`);
+      setState('done');
+    } catch (err) {
+      setDetail(err.message);
+      setState('error');
+    }
+  }
+
+  if (state === 'done') return <span className="applyStagedDone">✓ {detail}</span>;
+  return (
+    <span className="applyStagedWrap">
+      <button type="button" className="applyStagedBtn" disabled={state === 'busy'} onClick={apply}>
+        {state === 'busy' ? 'APPLYING…' : '⚡ APPLY CHANGES'}
+      </button>
+      {state === 'error' && <span className="applyStagedErr">✗ {detail}</span>}
+    </span>
+  );
+}
+
+function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse, onStop, onClear, workflowMode, setWorkflowMode, attachedFiles, onAddFiles, onRemoveFile, permanent }) {
+  const historyRef = useRef(null);
+  const rafRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
+
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!history.length) return;
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      const el = historyRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(rafRef.current);
   }, [history]);
 
+  async function handleFilePick(e, isFolder) {
+    const files = Array.from(e.target.files || []);
+    const filtered = isFolder
+      ? files.filter(f => {
+          const parts = f.webkitRelativePath.split('/');
+          if (parts.some(p => ATTACH_IGNORE.has(p) || (p.startsWith('.') && p !== '.'))) return false;
+          const ext = '.' + f.name.split('.').pop();
+          return ATTACH_EXTS.has(ext);
+        })
+      : files;
+    let total = 0;
+    const items = [];
+    for (const file of filtered.slice(0, 60)) {
+      if (total >= MAX_TOTAL_BYTES) break;
+      const raw = await readFileText(file);
+      const content = raw.slice(0, MAX_FILE_BYTES);
+      const name = file.webkitRelativePath || file.name;
+      items.push({ name, content });
+      total += content.length;
+    }
+    if (items.length) onAddFiles(items);
+    e.target.value = '';
+  }
+
   return (
-    <Panel title="CHAT SESSION" className="chatSessionPanel">
-      <button type="button" className="chatCollapseBtn" onClick={onCollapse}>↙ COLLAPSE</button>
-      <div className="chatSessionHistory">
+    <Panel title="MAVERICK // ORCHESTRATOR" className="chatSessionPanel">
+      {!permanent && <button type="button" className="chatCollapseBtn" onClick={onCollapse}>↙ COLLAPSE</button>}
+      <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={e => handleFilePick(e, false)} />
+      <input ref={folderInputRef} type="file" style={{ display: 'none' }} webkitdirectory="true" onChange={e => handleFilePick(e, true)} />
+      <div className="chatSessionHistory" ref={historyRef}>
         {history.length === 0 && <div className="chatSessionEmpty">No messages yet. Send a command below.</div>}
-        {history.map((msg, i) => (
-          <div key={i} className={`chatMsg ${msg.role}`}>
-            <span className="chatRole">{msg.role === 'user' ? 'CMD' : 'MAV'}</span>
-            <span className="chatText">{msg.content || (busy && i === history.length - 1 ? '▋' : '')}</span>
-          </div>
-        ))}
-        <div ref={endRef} />
+        {history.map((msg, i) => {
+          const stageMatch = msg.role === 'assistant' && (!busy || i < history.length - 1)
+            ? msg.content?.match(/\[STAGED:(stage-[\w-]+)\]/)
+            : null;
+          return (
+            <div key={i} className={`chatMsg ${msg.role}`}>
+              <span className="chatRole">{msg.role === 'user' ? 'CMD' : 'MAV'}</span>
+              <span className="chatText">{msg.content || (busy && i === history.length - 1 ? '▋' : '')}</span>
+              {stageMatch && <ApplyStagedButton stageId={stageMatch[1]} />}
+            </div>
+          );
+        })}
       </div>
       <div className="chatSessionModes">
         {WORKFLOW_MODES.map(mode => (
@@ -740,6 +828,16 @@ function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse
           </button>
         ))}
       </div>
+      {attachedFiles?.length > 0 && (
+        <div className="attachChips">
+          {attachedFiles.map((f, i) => (
+            <span key={i} className="attachChip">
+              <span className="attachChipLabel" title={f.name}>{f.name.split(/[\\/]/).pop()}</span>
+              <button type="button" className="attachChipRemove" onClick={() => onRemoveFile(i)}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
       <form className="chatSessionForm" onSubmit={onSubmit}>
         <textarea
           className="chatSessionInput"
@@ -751,6 +849,8 @@ function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(e); } }}
         />
         <div className="chatSessionActions">
+          <button type="button" className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Attach files">⊕ FILES</button>
+          <button type="button" className="attachBtn" onClick={() => folderInputRef.current?.click()} title="Attach folder">⊕ FOLDER</button>
           {busy
             ? <button type="button" className="stopBtn" onClick={onStop}>[ STOP ]</button>
             : <button type="submit" className="sendBtn" disabled={!input.trim()}>SEND</button>
@@ -856,35 +956,22 @@ function OrchestratorPage({ modelStatus, chatSession }) {
 
   return (
     <div className="orchestratorPage">
-      {chatSession?.expanded && (
-        <ChatSessionPanel
-          history={chatSession.history}
-          busy={chatSession.busy}
-          input={chatSession.input}
-          setInput={chatSession.setInput}
-          onSubmit={chatSession.onSubmit}
-          onCollapse={chatSession.onCollapse}
-          onStop={chatSession.onStop}
-          onClear={chatSession.onClear}
-          workflowMode={chatSession.workflowMode}
-          setWorkflowMode={chatSession.setWorkflowMode}
-        />
-      )}
-      <Panel title="AI ORCHESTRATOR V1" className="orchestratorCommand">
-        <form onSubmit={handlePlan}>
-          <textarea
-            value={idea}
-            onChange={(event) => setIdea(event.target.value)}
-            aria-label="Product idea"
-          />
-          <div className="orchestratorActions">
-            <button type="submit" disabled={busy || modelStatus.state !== 'online'}>
-              {busy ? 'Planning...' : 'Create Plan'}
-            </button>
-            <span>{modelStatus.state === 'online' ? `Lead worker online: ${compactModelName(modelStatus.model)}` : 'Local model offline'}</span>
-          </div>
-        </form>
-      </Panel>
+      <ChatSessionPanel
+        permanent
+        history={chatSession.history}
+        busy={chatSession.busy}
+        input={chatSession.input}
+        setInput={chatSession.setInput}
+        onSubmit={chatSession.onSubmit}
+        onCollapse={chatSession.onCollapse}
+        onStop={chatSession.onStop}
+        onClear={chatSession.onClear}
+        workflowMode={chatSession.workflowMode}
+        setWorkflowMode={chatSession.setWorkflowMode}
+        attachedFiles={chatSession.attachedFiles}
+        onAddFiles={chatSession.onAddFiles}
+        onRemoveFile={chatSession.onRemoveFile}
+      />
 
       <Panel title="WORKER ROUTER" className="workerRouter">
         <div className="workerGrid">
@@ -1398,6 +1485,8 @@ function App() {
   const chatAbortRef = useRef(null);
   const maverickHistoryRef = useRef([]);
   const [previewContent, setPreviewContent] = useState(null);
+  const [attachedFiles, setAttachedFiles] = useState([]);
+  const barFileInputRef = useRef(null);
 
   if (isClientMode) {
     return <ClientDashboard status={status} />;
@@ -1465,7 +1554,7 @@ function App() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: userMsg, mode: workflowMode, history: chatHistory }),
+        body: JSON.stringify({ prompt: userMsg, mode: workflowMode, history: chatHistory, attachments: attachedFiles }),
         signal: controller.signal
       });
       const reader = response.body.getReader();
@@ -1540,9 +1629,12 @@ function App() {
               onSubmit: handleChatSubmit,
               onCollapse: () => setChatExpanded(false),
               onStop: () => chatAbortRef.current?.abort(),
-              onClear: () => { pushChat([]); maverickHistoryRef.current = []; setPreviewContent(null); setChatExpanded(false); },
+              onClear: () => { pushChat([]); maverickHistoryRef.current = []; setPreviewContent(null); setAttachedFiles([]); },
               workflowMode,
               setWorkflowMode,
+              attachedFiles,
+              onAddFiles: (items) => setAttachedFiles(prev => [...prev, ...items]),
+              onRemoveFile: (i) => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i)),
             }}
           />
         )}
@@ -1560,7 +1652,7 @@ function App() {
           </div>
         )}
 
-        <div className="commandBar">
+        {view !== 'orchestrator' && <div className="commandBar">
           {chatPanelOpen && chatHistory.length > 0 && (
             <div className="chatHistory">
               {chatHistory.slice(-6).map((msg, i) => {
@@ -1606,7 +1698,31 @@ function App() {
               ↗ EXPAND
             </button>
           </div>
+          {attachedFiles.length > 0 && (
+            <div className="attachChips barChips">
+              {attachedFiles.map((f, i) => (
+                <span key={i} className="attachChip">
+                  <span className="attachChipLabel" title={f.name}>{f.name.split(/[\\/]/).pop()}</span>
+                  <button type="button" className="attachChipRemove" onClick={() => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i))}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
           <form className="chatForm" onSubmit={handleChatSubmit}>
+            <input ref={barFileInputRef} type="file" multiple style={{ display: 'none' }} onChange={async e => {
+              const files = Array.from(e.target.files || []);
+              let total = 0;
+              const items = [];
+              for (const file of files.slice(0, 20)) {
+                if (total >= MAX_TOTAL_BYTES) break;
+                const raw = await readFileText(file);
+                const content = raw.slice(0, MAX_FILE_BYTES);
+                items.push({ name: file.name, content });
+                total += content.length;
+              }
+              if (items.length) setAttachedFiles(prev => [...prev, ...items]);
+              e.target.value = '';
+            }} />
             <span className="chatPrompt">CMD &gt;</span>
             <input
               type="text"
@@ -1616,6 +1732,7 @@ function App() {
               placeholder={chatBusy ? 'Maverick is responding...' : 'Enter command or ask Maverick...'}
               disabled={chatBusy}
             />
+            <button type="button" className="attachBtn compact" title="Attach files as context" onClick={() => barFileInputRef.current?.click()}>⊕</button>
             {chatBusy ? (
               <button type="button" className="stopBtn" onClick={() => chatAbortRef.current?.abort()}>[ STOP ]</button>
             ) : (
@@ -1627,10 +1744,10 @@ function App() {
               </button>
             )}
             {chatHistory.length > 0 && !chatBusy && (
-              <button type="button" className="clearChatBtn" onClick={() => { pushChat([]); maverickHistoryRef.current = []; setPreviewContent(null); setChatPanelOpen(false); }}>CLR</button>
+              <button type="button" className="clearChatBtn" onClick={() => { pushChat([]); maverickHistoryRef.current = []; setPreviewContent(null); setAttachedFiles([]); }}>CLR</button>
             )}
           </form>
-        </div>
+        </div>}
       </main>
     </DashboardViewContext.Provider>
   );

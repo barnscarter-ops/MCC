@@ -13,7 +13,8 @@ const LEDGER = path.join(
   'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard\\.mav-console',
   'task-runs.json'
 );
-const MEMORY_DIR = 'C:\\Users\\carte\\.claude\\projects\\C--Workspace-Active-SEO-Agents-App\\memory';
+const MEMORY_DIR = process.env.MAV_MEMORY_PATH ||
+  'C:\\Users\\carte\\.claude\\projects\\C--Workspace-Active-homelab-noc-dashboard-homelab-noc-dashboard-homelab-noc-dashboard\\memory';
 const MEMORY_INDEX = path.join(MEMORY_DIR, 'MEMORY.md');
 const LLAMA_URL = 'http://127.0.0.1:8080';
 const MODEL = 'qwen3-14b';
