@@ -43,16 +43,17 @@ Single source of truth for how all three projects connect. Update this at the en
 
 ## AI Routing (MCC)
 
-| Mode | Model | Notes |
-|---|---|---|
-| ASK | RAG server → 192.168.1.12:8181 | External RAG |
-| BUILD | Qwen (plan) → Qwen (execute) → Gemini QC | Gemini QC is wrong — needs fixing |
-| REVIEW | Gemini Flash | Gemini = everyday chat only per user intent |
-| OPS | Qwen local | Always local |
+| Mode | Step 1 | Step 2 | Step 3 |
+|---|---|---|---|
+| ASK | RAG server (192.168.1.12:8181) | — | — |
+| BUILD | GPT-4o plan (600 tok, 0.3°) | Qwen local execute (2000 tok, 0.2°) | NIM Qwen2.5-Coder-32B QC (400 tok, 0.2°) |
+| OPS | GPT-4o plan (600 tok, 0.3°) | Qwen local execute (2000 tok, 0.2°) | NIM Qwen2.5-Coder-32B QC (400 tok, 0.2°) |
+| REVIEW | Gemini Flash (everyday chat only) | — | — |
 
-**Gemini intent:** Everyday/quick chat ONLY. Not QC, not code review.
-**Codex:** Wired as placeholder in UI — not yet implemented.
-**Claude:** Wired as placeholder in UI — not yet implemented.
+**API keys (User-level Windows env vars):**
+- `OPENAI_API_KEY` — GPT-4o planner
+- `NVIDIA_NIM_API_KEY` — NIM QC reviewer
+- `GEMINI_API_KEY` — Gemini chat (set separately if needed)
 
 ---
 
