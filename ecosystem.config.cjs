@@ -17,6 +17,7 @@ module.exports = {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
         NVIDIA_NIM_API_KEY: process.env.NVIDIA_NIM_API_KEY || '',
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+        MAV_EXTRA_ROOTS: process.env.MAV_EXTRA_ROOTS || '',
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
     },
