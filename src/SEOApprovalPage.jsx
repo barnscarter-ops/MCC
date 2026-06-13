@@ -16,16 +16,18 @@ function PostCard({ post }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div style={{ background: '#1e2130', border: '1px solid #2a2f45', borderRadius: 8, padding: '12px 16px', marginBottom: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: expanded ? 10 : 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: expanded ? 10 : 0 }}>
         <Badge label={post.platform} color={post.platform === 'facebook' ? '#6366f1' : '#10b981'} />
         <Badge label={post.type || 'post'} color="#6b7280" />
         {post.day && <span style={{ color: '#6b7280', fontSize: 12 }}>Day {post.day}</span>}
         <span style={{ color: '#94a3b8', fontSize: 12 }}>{post.post_date}</span>
-        <span style={{ color: '#f1f5f9', fontWeight: 600, flex: 1, fontSize: 13 }}>{post.service}</span>
-        <Badge label={post.status} color={STATUS_COLOR[post.status] || '#6b7280'} />
-        <button onClick={() => setExpanded(e => !e)} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18, padding: '0 4px' }}>
-          {expanded ? '▲' : '▼'}
-        </button>
+        <span style={{ color: '#f1f5f9', fontWeight: 600, flex: 1, minWidth: 80, fontSize: 13 }}>{post.service}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+          <Badge label={post.status} color={STATUS_COLOR[post.status] || '#6b7280'} />
+          <button onClick={() => setExpanded(e => !e)} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18, padding: '0 4px' }}>
+            {expanded ? '▲' : '▼'}
+          </button>
+        </div>
       </div>
       {expanded && (
         <div style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.6 }}>
@@ -46,9 +48,23 @@ function TaskCard({ task }) {
     <div style={{ background: '#1e2130', border: `1px solid ${PRIORITY_COLOR[task.priority] || '#2a2f45'}44`, borderRadius: 8, padding: '12px 16px', marginBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
         <Badge label={task.priority} color={PRIORITY_COLOR[task.priority] || '#6b7280'} />
-        <Badge label={task.type.replace('_', ' ')} color="#6b7280" />
+        <Badge label={(task.type || 'task').replace('_', ' ')} color="#6b7280" />
         <span style={{ color: '#f1f5f9', fontWeight: 600, flex: 1, fontSize: 13 }}>{task.title}</span>
         <Badge label={task.status} color={STATUS_COLOR[task.status] || '#6b7280'} />
+      </div>
+      {task.description && <p style={{ color: '#6b7280', fontSize: 12, margin: 0, lineHeight: 1.5 }}>{task.description.slice(0, 200)}</p>}
+    </div>
+  );
+}
+
+function CompletedTaskCard({ task }) {
+  return (
+    <div style={{ background: '#1e2130', border: '1px solid #10b98133', borderRadius: 8, padding: '12px 16px', marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: task.description ? 6 : 0 }}>
+        <span style={{ color: '#10b981', fontSize: 16 }}>✓</span>
+        <Badge label={task.task_id || 'task'} color="#10b981" />
+        <span style={{ color: '#f1f5f9', fontWeight: 600, flex: 1, fontSize: 13 }}>{task.title}</span>
+        <span style={{ color: '#6b7280', fontSize: 11 }}>{task.completed_at ? new Date(task.completed_at).toLocaleDateString() : task.created_at ? new Date(task.created_at).toLocaleDateString() : ''}</span>
       </div>
       {task.description && <p style={{ color: '#6b7280', fontSize: 12, margin: 0, lineHeight: 1.5 }}>{task.description.slice(0, 200)}</p>}
     </div>
@@ -60,6 +76,7 @@ export default function SEOApprovalPage() {
   const [selectedRun, setSelectedRun] = useState(null);
   const [posts, setPosts] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [completedTasks, setCompletedTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [approving, setApproving] = useState(false);
   const [tab, setTab] = useState('facebook');
@@ -84,6 +101,18 @@ export default function SEOApprovalPage() {
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
   useEffect(() => { if (selectedRun) loadRunData(selectedRun); }, [selectedRun, loadRunData]);
+
+  // Load completed tasks log (all runs, all time)
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from('website_tasks').select('id,title,description,details,updated_at,created_at,run_id')
+      .eq('status', 'done').order('updated_at', { ascending: false }).limit(50)
+      .then(({ data }) => setCompletedTasks((data || []).map(t => ({
+        ...t,
+        task_id: (t.details && typeof t.details === 'object') ? t.details.task_id : null,
+        completed_at: t.updated_at,
+      }))));
+  }, []);
 
   // Realtime subscription
   useEffect(() => {
@@ -127,7 +156,7 @@ export default function SEOApprovalPage() {
           <p style={{ color: '#6b7280', margin: '4px 0 0', fontSize: 13 }}>Review and approve weekly content before it posts</p>
         </div>
         {selectedRun && (
-          <Badge label={selectedRun.status.replace(/_/g, ' ')} color={STATUS_COLOR[selectedRun.status] || '#6b7280'} />
+          <Badge label={(selectedRun.status || 'unknown').replace(/_/g, ' ')} color={STATUS_COLOR[selectedRun.status] || '#6b7280'} />
         )}
       </div>
 
@@ -176,7 +205,7 @@ export default function SEOApprovalPage() {
 
           {/* Tabs */}
           <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid #2a2f45' }}>
-            {[['facebook', `Facebook (${fbPosts.length})`], ['gbp', `GBP (${gbpPosts.length})`], ['tasks', `Website Tasks (${tasks.length})`]].map(([key, label]) => (
+            {[['facebook', `Facebook (${fbPosts.length})`], ['gbp', `GBP (${gbpPosts.length})`], ['tasks', `Website Tasks (${tasks.length})`], ['history', `Completed (${completedTasks.length})`]].map(([key, label]) => (
               <button key={key} onClick={() => setTab(key)} style={{ background: 'none', border: 'none', borderBottom: tab === key ? '2px solid #6366f1' : '2px solid transparent', color: tab === key ? '#f1f5f9' : '#6b7280', padding: '8px 16px', cursor: 'pointer', fontSize: 13, fontWeight: tab === key ? 600 : 400 }}>
                 {label}
               </button>
@@ -187,6 +216,11 @@ export default function SEOApprovalPage() {
           {tab === 'facebook' && fbPosts.map(p => <PostCard key={p.id} post={p} />)}
           {tab === 'gbp' && gbpPosts.map(p => <PostCard key={p.id} post={p} />)}
           {tab === 'tasks' && tasks.map(t => <TaskCard key={t.id} task={t} />)}
+          {tab === 'history' && (
+            completedTasks.length === 0
+              ? <div style={{ color: '#6b7280', textAlign: 'center', padding: 40 }}>No completed tasks yet.</div>
+              : completedTasks.map(t => <CompletedTaskCard key={t.id} task={t} />)
+          )}
         </>
       )}
     </div>

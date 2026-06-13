@@ -1375,8 +1375,27 @@ async function handleChat(req, res) {
   }
 }
 
+const ALLOWED_ORIGINS = [
+  'https://homelab-noc-dashboard.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:3011',
+];
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+  // CORS — allow Vercel frontend and local dev
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.vercel.app')) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   if (url.pathname === '/api/chat' && req.method === 'POST') {
     await handleChat(req, res);
     return;

@@ -4421,3 +4421,102 @@ body {
   color: var(--red, #c75050);
   font-size: 0.72rem;
 }
+
+/* ── Mobile / phone ≤480px ──────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  /* Navigation tabs — horizontal scroll instead of wrapping/clipping */
+  .viewToggle {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+  .viewToggle::-webkit-scrollbar { display: none; }
+  .viewToggle button {
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    padding: 5px 10px;
+  }
+
+  /* Top bar — compact */
+  .topBar {
+    padding: 6px 8px;
+    gap: 6px;
+    min-height: unset;
+  }
+  .topBarTitle { font-size: 0.85rem; }
+  .topBarRight { gap: 6px; }
+
+  /* Hardware gauges — 2 per row, shorter chart */
+  .gaugeRow,
+  .pcGaugeRow {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px;
+  }
+  .gaugeChart { height: 72px !important; }
+  .gaugeShell { padding: 8px 6px; }
+  .gaugeLabel { font-size: 0.68rem; }
+  .gaugeValue { font-size: 1rem; }
+
+  /* Server / storage grids — single column */
+  .serverGrid,
+  .storageGrid,
+  .driveGrid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Model ops grid — single column */
+  .modelOpsGrid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Hardware spec strip — 2 columns */
+  .hardwareSpecStrip {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 6px;
+  }
+
+  /* Hide the SVG topology map — too complex to render on phone */
+  .hardwareNetworkMapPanel,
+  .hardwareTopology {
+    display: none !important;
+  }
+
+  /* Worker grid — single column */
+  .workerGrid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Home hero / workflow stats — single column */
+  .homeHeroGrid,
+  .workflowStats {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Command bar — ensure it doesn't get buried behind mobile keyboard */
+  .commandBar {
+    padding: 8px;
+  }
+  .commandBarInput {
+    font-size: 0.9rem;
+  }
+
+  /* Action queue row — stack vertically */
+  .actionQueueRow {
+    flex-direction: column !important;
+    gap: 8px;
+  }
+
+  /* Panels — reduce padding */
+  .panel,
+  .dashPanel {
+    padding: 10px 10px;
+  }
+
+  /* Touch-friendly tap targets */
+  button {
+    min-height: 36px;
+  }
+}

@@ -1216,7 +1216,7 @@ function HomePage({ modelStatus }) {
   function renderReportRow(report) {
     return (
       <div className="reportRow" key={report.name}>
-        <strong>{report.name.replace(/_/g, ' ')}</strong>
+        <strong>{(report.name || '').replace(/_/g, ' ')}</strong>
         <span>{new Date(report.updatedAt).toLocaleString()}</span>
         <em>{report.displayTitle || report.headings?.[0] || report.summary?.[0] || 'Report ready'}</em>
       </div>
