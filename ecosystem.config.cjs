@@ -1,0 +1,60 @@
+require('dotenv').config({ path: 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard\\.env' });
+
+module.exports = {
+  apps: [
+    {
+      name: 'mav-console',
+      script: 'server.mjs',
+      cwd: 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard',
+      interpreter: 'node',
+      watch: false,
+      autorestart: true,
+      max_restarts: 5,
+      env: {
+        NODE_ENV: 'production',
+        PORT: '3000',
+        MAV_REPO_BRIDGE_URL: 'http://127.0.0.1:8790',
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+        NVIDIA_NIM_API_KEY: process.env.NVIDIA_NIM_API_KEY || '',
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+        MAV_EXTRA_ROOTS: process.env.MAV_EXTRA_ROOTS || '',
+      },
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+    {
+      name: 'prometheus-sync',
+      script: 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard\\scripts\\prometheus-sync.mjs',
+      cwd: 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard',
+      interpreter: 'node',
+      watch: false,
+      autorestart: true,
+      max_restarts: 20,
+      restart_delay: 3000,
+      env_file: 'C:\\Workspace\\Active\\SEO-Agents-App\\.env',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+    {
+      name: 'downloads-watcher',
+      script: 'C:\\Users\\carte\\DownloadsOrganizer\\downloads_watcher.py',
+      interpreter: 'C:\\Users\\carte\\DownloadsOrganizer\\.venv\\Scripts\\pythonw.exe',
+      cwd: 'C:\\Users\\carte\\DownloadsOrganizer',
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+    {
+      name: 'mav-bridge',
+      script: 'C:\\Workspace\\Active\\SEO-Agents-App\\scripts\\mav-bridge.mjs',
+      cwd: 'C:\\Workspace\\Active\\SEO-Agents-App',
+      interpreter: 'node',
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      env_file: 'C:\\Workspace\\Active\\SEO-Agents-App\\.env',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+  ]
+};

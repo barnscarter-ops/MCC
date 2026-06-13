@@ -3,8 +3,8 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
     $PSNativeCommandUseErrorActionPreference = $false
 }
 
-$bridge = "C:\llama-cpp-server\mav-repo-bridge.mjs"
-$logFile = "C:\llama-cpp-server\mav-repo-bridge.log"
+$bridge = "C:\Workspace\Active\homelab-noc-dashboard\homelab-noc-dashboard\homelab-noc-dashboard\ops\windows-bridge\mav-repo-bridge.mjs"
+$logFile = "C:\Workspace\Active\homelab-noc-dashboard\homelab-noc-dashboard\homelab-noc-dashboard\ops\windows-bridge\mav-repo-bridge.log"
 $port = if ($env:MAV_REPO_BRIDGE_PORT) { $env:MAV_REPO_BRIDGE_PORT } else { "8790" }
 
 if (-not (Test-Path $bridge)) {

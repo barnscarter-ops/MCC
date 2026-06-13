@@ -1,17 +1,29 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as echarts from 'echarts';
-import { useMetrics, useModelStatus, useOrchestratorStatus } from './hooks/useMetrics.js';
-import { createLocalWorkerBrief, createOrchestratorPlan, createTaskRun, updateTaskRun } from './lib/api.js';
+import { useDeployStatus, useMetrics, useModelStatus, useOrchestratorStatus, useSeoWorkflow } from './hooks/useMetrics.js';
+import {
+  approveSeoAction,
+  createLocalWorkerBrief,
+  createOrchestratorPlan,
+  createTaskRun,
+  queryMemory,
+  querySeoActions,
+  runSeoAction,
+  updateTaskRun
+} from './lib/api.js';
 import {
   clampPercent,
   colorFor,
   diskUsedPercent,
   formatCompactNumber,
   formatGbFromBytes,
+  formatMbps,
   formatPortRate,
   smartLabel
 } from './lib/format.js';
+import SEOApprovalPage from './SEOApprovalPage.jsx';
+import { isDocumentResponse, MavMarkdown } from './mavUtils.js';
 import './styles.css';
 
 function Gauge({ label, value, sublabel, color, max = 100, unit = '%', compact = false, valueText = null, decimals = 0 }) {
@@ -106,6 +118,28 @@ function Panel({ title, children, className = '' }) {
   );
 }
 
+function formatFullRate(mbps) {
+  if (!Number.isFinite(mbps)) return 'WAITING';
+  if (mbps >= 1000) return `${(mbps / 1000).toFixed(2)} Gb/s`;
+  if (mbps >= 10) return `${mbps.toFixed(0)} Mb/s`;
+  if (mbps > 0) return `${mbps.toFixed(1)} Mb/s`;
+  return '0 Mb/s';
+}
+
+function formatWanDown(metrics) {
+  const portDown = Number(metrics.switchPort24Rx);
+  if (Number.isFinite(portDown) && portDown > 0) return formatFullRate(portDown);
+  const wanDown = Number(metrics.wanDown);
+  if (Number.isFinite(wanDown)) return formatFullRate(wanDown * 1000);
+  return 'WAITING';
+}
+
+function formatPcUpDown(metrics) {
+  const down = Number.isFinite(metrics.switchPort3Rx) ? metrics.switchPort3Rx : metrics.pcNetIn;
+  const up = Number.isFinite(metrics.switchPort3Tx) ? metrics.switchPort3Tx : metrics.pcNetOut;
+  return `D ${formatMbps(down)} / U ${formatMbps(up)}`;
+}
+
 function compactModelName(name) {
   if (!name) return 'NO MODEL';
   return name.replace(/^qwen/i, 'Qwen').replace(/-/g, ' ');
@@ -113,6 +147,7 @@ function compactModelName(name) {
 
 function TopBar({ status, modelStatus }) {
   const [view, setView] = useDashboardView();
+  const deployStatus = useDeployStatus();
   const time = useMemo(() => {
     const now = status.updatedAt || new Date();
     return new Intl.DateTimeFormat(undefined, {
@@ -121,18 +156,36 @@ function TopBar({ status, modelStatus }) {
       second: '2-digit'
     }).format(now);
   }, [status.updatedAt]);
+  const deployTime = useMemo(() => {
+    if (!deployStatus.deployedAt) return '--:--';
+    return new Intl.DateTimeFormat(undefined, {
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(new Date(deployStatus.deployedAt));
+  }, [deployStatus.deployedAt]);
+  const deployOk = deployStatus.state === 'ok';
   return (
     <header className="topBar">
-      <div className="brandMark">MAV-CONSOLE</div>
       <div className="clockBlock">
         <div>{time}</div>
         <span>{status.state === 'online' ? 'PROMETHEUS ONLINE' : status.state.toUpperCase()}</span>
       </div>
-      <nav className="viewToggle" aria-label="Dashboard view">
-        <button className={view === 'hardware' ? 'active' : ''} onClick={() => setView('hardware')}>Hardware</button>
-        <button className={view === 'network' ? 'active' : ''} onClick={() => setView('network')}>Network Map</button>
-        <button className={view === 'orchestrator' ? 'active' : ''} onClick={() => setView('orchestrator')}>Orchestrator</button>
-      </nav>
+      <div className="headerTab">
+        <div className="brandMark">
+          <img src="/assets/maverick-core-commander-logo.png" alt="Maverick Core Commander" />
+        </div>
+        <nav className="viewToggle" aria-label="Dashboard view">
+          <button className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}>Home</button>
+          <button className={view === 'hardware' ? 'active' : ''} onClick={() => setView('hardware')}>Hardware</button>
+          <button className={view === 'network' ? 'active' : ''} onClick={() => setView('network')}>Network Map</button>
+          <button className={view === 'orchestrator' ? 'active' : ''} onClick={() => setView('orchestrator')}>Orchestrator</button>
+          <button className={view === 'seo' ? 'active' : ''} onClick={() => setView('seo')}>SEO Pipeline</button>
+        </nav>
+      </div>
+      <div className={`deployStatus ${deployOk ? 'online' : 'offline'}`}>
+        <strong>{deployOk ? 'DEPLOY OK' : 'DEPLOY ...'}</strong>
+        <span>{deployTime}</span>
+      </div>
       <div className={`agentStatus ${modelStatus.state === 'online' ? 'online' : 'offline'}`}>
         LOCAL MODEL: <strong>{compactModelName(modelStatus.model)}</strong>
         <em>|</em>
@@ -142,7 +195,7 @@ function TopBar({ status, modelStatus }) {
   );
 }
 
-const DashboardViewContext = React.createContext(['hardware', () => {}]);
+const DashboardViewContext = React.createContext(['home', () => {}]);
 
 function useDashboardView() {
   return React.useContext(DashboardViewContext);
@@ -152,7 +205,6 @@ function Workstation({ metrics }) {
   const ramUsed = formatGbFromBytes(metrics.pcRamUsedBytes);
   const ramTotal = formatGbFromBytes(metrics.pcRamTotalBytes);
   const driveCUsed = diskUsedPercent(metrics.pcDriveCFreeBytes, metrics.pcDriveCTotalBytes, metrics.pcDrive);
-  const driveDUsed = diskUsedPercent(metrics.pcDriveDFreeBytes, metrics.pcDriveDTotalBytes, metrics.pcDriveD);
   return (
     <Panel title="WORKSTATION: INTEL i5-13600K" className="workstation">
       <div className="gaugeRow pcGaugeRow">
@@ -196,15 +248,21 @@ function Workstation({ metrics }) {
           used={driveCUsed}
           freeBytes={metrics.pcDriveCFreeBytes}
           totalBytes={metrics.pcDriveCTotalBytes}
-          smart={metrics.pcDriveCSmart}
+          healthText="HEALTHY"
         />
         <DriveBlock
-          name="256GB WD-Black SN7100"
-          mount="SECOND NVME"
-          used={driveDUsed}
-          freeBytes={metrics.pcDriveDFreeBytes}
-          totalBytes={metrics.pcDriveDTotalBytes}
-          smart={metrics.pcDriveDSmart}
+          name="256GB Toshiba NVMe"
+          mount="INSTALLED / RAW"
+          totalBytes={256060514304}
+          healthText="HEALTHY"
+          note="No drive letter or filesystem yet"
+        />
+        <DriveBlock
+          name="1TB WD-Black SN7100"
+          mount="PLANNED / BOTTOM NVME"
+          totalBytes={1000204886016}
+          healthText="PENDING"
+          note="Install pending tonight"
         />
       </div>
       <div className="panelFooter">
@@ -215,7 +273,7 @@ function Workstation({ metrics }) {
   );
 }
 
-function ModelOps({ metrics, modelStatus }) {
+function ModelOps({ metrics, modelStatus, orchestratorStatus }) {
   const gpuMemUsedGb = formatGbFromBytes(metrics.pcGpuMemUsedBytes);
   const gpuMemTotalGb = formatGbFromBytes(metrics.pcGpuMemTotalBytes);
   const gpuMemPercent = metrics.pcGpuMemUsedBytes && metrics.pcGpuMemTotalBytes
@@ -228,6 +286,13 @@ function ModelOps({ metrics, modelStatus }) {
     : gpuLoad != null && gpuLoad >= 10
       ? 'GENERATING'
       : 'LOADED / IDLE';
+  const { evalSpeed, promptTokensTotal, outputTokensTotal, genSpeed } = modelStatus;
+  const claudeWorker = (orchestratorStatus.workers || []).find((worker) => worker.id === 'claude-cli');
+  const claudeState = claudeWorker?.state || 'loading';
+  const claudeReady = /ready|online|available|manual/i.test(claudeState);
+  const promptMetricsLive = modelStatus.promptMetricsSource && modelStatus.promptMetricsSource !== 'unavailable';
+  const formatTokenMetric = (value) => value == null ? '--' : value.toLocaleString();
+  const formatSpeedMetric = (value) => value == null ? '--' : `${Number(value).toFixed(1)} t/s`;
 
   return (
     <Panel title="LOCAL AI CORE" className="modelOps">
@@ -267,17 +332,50 @@ function ModelOps({ metrics, modelStatus }) {
           <strong>{modelStatus.endpoint || 'UNLINKED'}</strong>
         </div>
       </div>
+      <div className="aiRuntimeGrid">
+        <div className={`claudeMgrChip ${claudeReady ? 'ok' : claudeState === 'loading' ? 'loading' : 'offline'}`}>
+          <span>CLAUDE MGR</span>
+          <strong>{claudeReady ? 'READY' : claudeState.toUpperCase()}</strong>
+          <em>PLANNER / QC</em>
+        </div>
+        <div className="promptMetaPanel">
+          <div className="promptMetaGrid">
+            <div>
+              <span>EVAL</span>
+              <strong>{formatSpeedMetric(evalSpeed)}</strong>
+            </div>
+            <div>
+              <span>GEN</span>
+              <strong>{formatSpeedMetric(genSpeed)}</strong>
+            </div>
+            <div>
+              <span>PROMPT</span>
+              <strong>{formatTokenMetric(promptTokensTotal)}</strong>
+            </div>
+            <div>
+              <span>OUTPUT</span>
+              <strong>{formatTokenMetric(outputTokensTotal)}</strong>
+            </div>
+          </div>
+          <div className={`promptMetricStatus ${promptMetricsLive ? 'online' : 'offline'}`}>
+            {promptMetricsLive ? 'LIVE LLAMA METRICS' : 'LLAMA METRICS OFF'}
+          </div>
+        </div>
+      </div>
     </Panel>
   );
 }
 
-function DriveBlock({ name, mount, used, freeBytes, totalBytes, smart }) {
+function DriveBlock({ name, mount, used = null, freeBytes = null, totalBytes = null, smart = null, healthText = null, note = null }) {
   const safeUsed = used == null ? null : clampPercent(used);
+  const statusText = healthText || smartLabel(smart);
+  const statusClass = statusText === 'PENDING' ? 'pending' : smart === 0 ? 'bad' : statusText === 'HEALTHY' || smart === 1 ? 'ok' : '';
+  const usedBytes = Number.isFinite(freeBytes) && Number.isFinite(totalBytes) ? totalBytes - freeBytes : null;
   return (
-    <div className="driveBlock">
+    <div className={`driveBlock ${safeUsed == null ? 'waiting' : ''}`}>
       <div className="driveHead">
         <span>{name}</span>
-        <strong className={smart === 0 ? 'bad' : smart === 1 ? 'ok' : ''}>{smartLabel(smart)}</strong>
+        <strong className={statusClass}>{statusText}</strong>
       </div>
       <div className="driveMeta">
         <em>{mount}</em>
@@ -285,9 +383,10 @@ function DriveBlock({ name, mount, used, freeBytes, totalBytes, smart }) {
       </div>
       <div className="miniBar driveUsage"><i style={{ width: `${safeUsed ?? 0}%` }} /></div>
       <div className="driveStats">
-        <span>FREE {formatGbFromBytes(freeBytes)}</span>
+        <span>{usedBytes == null ? 'USED --' : `USED ${formatGbFromBytes(usedBytes)}`}</span>
         <span>TOTAL {formatGbFromBytes(totalBytes)}</span>
       </div>
+      {note ? <div className="driveNote">{note}</div> : null}
     </div>
   );
 }
@@ -317,21 +416,15 @@ function SwitchGraphic() {
 function Network({ metrics }) {
   return (
     <Panel title="NETWORK MAP" className="network">
-      <div className="activePorts">ACTIVE PORTS | LINKING PORTS</div>
-      <SwitchGraphic />
       <HardwareNetworkMap metrics={metrics} />
       <div className="networkStats">
         <div>
           <span>WAN DOWN</span>
-          <strong>{metrics.wanDown?.toFixed?.(2) ?? '0.00'} Gb/s</strong>
+          <strong>{formatWanDown(metrics)}</strong>
         </div>
         <div>
-          <span>PC RECEIVE</span>
-          <strong>{metrics.pcNetIn?.toFixed?.(1) ?? '0.0'} Mb/s</strong>
-        </div>
-        <div>
-          <span>DIRECT LINK</span>
-          <strong className="direct-link-stat">{metrics.serverNetDirect?.toFixed?.(1) ?? '0.0'} Mb/s</strong>
+          <span>PC UP / DOWN</span>
+          <strong>{formatPcUpDown(metrics)}</strong>
         </div>
       </div>
     </Panel>
@@ -345,7 +438,7 @@ function HardwareNetworkMap({ metrics }) {
   const serverHealth = Math.max(clampPercent(metrics.serverCpu), clampPercent(metrics.serverRam), clampPercent(metrics.rootDisk));
   const pcClass = pcHealth >= 85 ? 'danger' : pcHealth >= 60 ? 'warn' : 'good';
   const serverClass = serverHealth >= 85 ? 'danger' : serverHealth >= 60 ? 'warn' : 'good';
-  const gatewayRate = `${metrics.wanDown?.toFixed?.(2) ?? '0.00'} Gb/s`;
+  const gatewayRate = formatWanDown(metrics);
   return (
     <div className="hardwareNetworkMapPanel">
       <div className="hardwareTopology">
@@ -390,7 +483,6 @@ function HardwareNetworkMap({ metrics }) {
           ['1', 'HP ProDesk Server', serverOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort1Rx, metrics.switchPort1Tx)],
           ['2', 'x25 Deco Mesh', 'ACTIVE', formatPortRate(metrics.switchPort2Rx, metrics.switchPort2Tx)],
           ['3', 'Main Workstation', pcOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort3Rx, metrics.switchPort3Tx)],
-          ['DIRECT', 'Server ↔ PC', serverOnline && pcOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.serverNetDirect, metrics.pcNetDirect)],
           ['4-22', 'Available', 'IDLE', '-']
         ].map(([port, device, state, rate]) => (
           <div className="hardwarePortRow" key={port}>
@@ -432,7 +524,8 @@ function Server({ metrics }) {
 
 function Storage({ metrics }) {
   const root = clampPercent(metrics.rootDisk);
-  const data = metrics.dataDisk == null ? null : clampPercent(metrics.dataDisk);
+  const localLvmUsed = diskUsedPercent(metrics.pveLocalLvmFreeBytes, metrics.pveLocalLvmTotalBytes, null);
+  const samsungSataUsed = diskUsedPercent(metrics.samsungSataFreeBytes, metrics.samsungSataTotalBytes, null);
   return (
     <Panel title="STORAGE AND HEALTH" className="storage">
       <div className="healthBar">
@@ -443,24 +536,33 @@ function Storage({ metrics }) {
         <strong>98% GOOD</strong>
       </div>
       <div className="storageGrid">
-        <div className="storageBlock">
-          <h3>SERVER ROOT</h3>
-          <p>(PROXMOX 256GB)</p>
-          <div className="miniBar"><i style={{ width: `${root}%` }} /></div>
-          <span>{Math.round(root)}% USED</span>
-        </div>
-        <div className="storageBlock future">
-          <h3>SERVER DATA</h3>
-          <p>(2TB WD-BLACK)</p>
-          <div className="miniBar"><i style={{ width: `${data ?? 0}%` }} /></div>
-          <span>{data == null ? 'WAITING FOR /data' : `${Math.round(data)}% USED`}</span>
-        </div>
-        <div className="storageBlock">
-          <h3>MAIN PC C:</h3>
-          <p>(1TB NVME)</p>
-          <div className="miniBar"><i style={{ width: `${clampPercent(metrics.pcDrive)}%` }} /></div>
-          <span>{Math.round(clampPercent(metrics.pcDrive))}% USED</span>
-        </div>
+        <DriveBlock
+          name="Proxmox Root"
+          mount="/ on pve-root"
+          used={root}
+          freeBytes={metrics.serverRootFreeBytes}
+          totalBytes={metrics.serverRootTotalBytes}
+          healthText="LIVE"
+          note="WD_BLACK SN770 2TB NVMe"
+        />
+        <DriveBlock
+          name="Proxmox local-lvm"
+          mount="LVM THIN / NVME"
+          used={localLvmUsed}
+          freeBytes={metrics.pveLocalLvmFreeBytes}
+          totalBytes={metrics.pveLocalLvmTotalBytes}
+          healthText={localLvmUsed == null ? 'PVE' : 'LIVE'}
+          note="WD_BLACK SN770 2TB NVMe"
+        />
+        <DriveBlock
+          name="Samsung 840 Pro SATA"
+          mount="/mnt/samsung-sata"
+          used={samsungSataUsed}
+          freeBytes={metrics.samsungSataFreeBytes}
+          totalBytes={metrics.samsungSataTotalBytes}
+          healthText={samsungSataUsed == null ? 'INSTALLED' : 'LIVE'}
+          note="Mounted NTFS / SMART passed"
+        />
       </div>
     </Panel>
   );
@@ -500,6 +602,7 @@ function NetworkMapPage({ metrics }) {
   const serverClass = serverHealth >= 85 ? 'danger' : serverHealth >= 60 ? 'warn' : 'good';
   const gatewayClass = metrics.wanDown > 0 || metrics.wanUp > 0 ? 'good' : 'good';
   const meshClass = 'good';
+  const gatewayRate = formatWanDown(metrics);
   return (
     <div className="mapPage">
       <Panel title="LIVE NETWORK MAP" className="mapPanel">
@@ -514,7 +617,7 @@ function NetworkMapPage({ metrics }) {
           </div>
           <div className="mapNode router">
             <span>Gateway Router</span>
-            <strong>{metrics.wanDown?.toFixed?.(2) ?? '0.00'} Gb/s DOWN</strong>
+            <strong>{gatewayRate} DOWN</strong>
           </div>
           <div className="mapNode switch">
             <span>10Gb Network Switch</span>
@@ -578,7 +681,6 @@ function NetworkMapPage({ metrics }) {
             ['1', 'HP ProDesk Server', serverOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort1Rx, metrics.switchPort1Tx)],
             ['2', 'x25 Deco Mesh', 'ACTIVE', formatPortRate(metrics.switchPort2Rx, metrics.switchPort2Tx)],
             ['3', 'Main Workstation', pcOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort3Rx, metrics.switchPort3Tx)],
-            ['DIRECT', 'Server ↔ PC', serverOnline && pcOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.serverNetDirect, metrics.pcNetDirect)],
             ['4-22', 'Available', 'IDLE', '-']
           ].map(([port, device, state, rate]) => (
             <div className="portRow" key={port}>
@@ -597,7 +699,6 @@ function NetworkMapPage({ metrics }) {
 function workerLabel(workerId) {
   const labels = {
     'local-qwen': 'LOCAL QWEN',
-    'hermes-qwen': 'HERMES QWEN',
     'repo-bridge': 'REPO BRIDGE',
     'codex-review': 'CODEX REVIEW',
     'claude-cli': 'CLAUDE CLI',
@@ -606,12 +707,168 @@ function workerLabel(workerId) {
   return labels[workerId] || workerId?.toUpperCase?.() || 'UNROUTED';
 }
 
-function OrchestratorPage({ modelStatus }) {
+const ATTACH_IGNORE = new Set(['node_modules', '.git', 'dist', '.venv', '__pycache__', '.cache', 'build', '.next', 'tmp']);
+const ATTACH_EXTS = new Set(['.mjs', '.js', '.jsx', '.ts', '.tsx', '.py', '.css', '.json', '.cjs', '.md', '.sh', '.ps1', '.yaml', '.yml']);
+const MAX_FILE_BYTES = 8000;
+const MAX_TOTAL_BYTES = 32000;
+
+async function readFileText(file) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result || '');
+    reader.onerror = () => resolve('[unreadable]');
+    reader.readAsText(file);
+  });
+}
+
+function ApplyStagedButton({ stageId }) {
+  const [state, setState] = useState('idle');
+  const [detail, setDetail] = useState('');
+
+  async function apply() {
+    setState('busy');
+    try {
+      const res = await fetch('/api/build/apply', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: stageId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `status ${res.status}`);
+      setDetail(`Applied: ${data.applied.join(', ')}`);
+      setState('done');
+    } catch (err) {
+      setDetail(err.message);
+      setState('error');
+    }
+  }
+
+  if (state === 'done') return <span className="applyStagedDone">✓ {detail}</span>;
+  return (
+    <span className="applyStagedWrap">
+      <button type="button" className="applyStagedBtn" disabled={state === 'busy'} onClick={apply}>
+        {state === 'busy' ? 'APPLYING…' : '⚡ APPLY CHANGES'}
+      </button>
+      {state === 'error' && <span className="applyStagedErr">✗ {detail}</span>}
+    </span>
+  );
+}
+
+function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse, onStop, onClear, workflowMode, setWorkflowMode, attachedFiles, onAddFiles, onRemoveFile, permanent }) {
+  const historyRef = useRef(null);
+  const rafRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!history.length) return;
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      const el = historyRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [history]);
+
+  async function handleFilePick(e) {
+    const files = Array.from(e.target.files || []);
+    let total = 0;
+    const items = [];
+    for (const file of files.slice(0, 60)) {
+      if (total >= MAX_TOTAL_BYTES) break;
+      const raw = await readFileText(file);
+      const content = raw.slice(0, MAX_FILE_BYTES);
+      items.push({ name: file.name, content });
+      total += content.length;
+    }
+    if (items.length) onAddFiles(items);
+    e.target.value = '';
+  }
+
+  async function handleFolderAdd() {
+    try {
+      const res = await fetch('/api/browse-folder');
+      const { path: folderPath } = await res.json();
+      if (!folderPath) return;
+      const name = folderPath.split(/[\\/]/).filter(Boolean).pop() || folderPath;
+      onAddFiles([{ name: name + '/', type: 'folder', path: folderPath }]);
+    } catch {}
+  }
+
+  return (
+    <Panel title="MAVERICK // ORCHESTRATOR" className="chatSessionPanel">
+      {!permanent && <button type="button" className="chatCollapseBtn" onClick={onCollapse}>↙ COLLAPSE</button>}
+      <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={e => handleFilePick(e)} />
+      <div className="chatSessionHistory" ref={historyRef}>
+        {history.length === 0 && <div className="chatSessionEmpty">No messages yet. Send a command below.</div>}
+        {history.map((msg, i) => {
+          const stageMatch = msg.role === 'assistant' && (!busy || i < history.length - 1)
+            ? msg.content?.match(/\[STAGED:(stage-[\w-]+)\]/)
+            : null;
+          return (
+            <div key={i} className={`chatMsg ${msg.role}`}>
+              <span className="chatRole">{msg.role === 'user' ? 'CMD' : 'MAV'}</span>
+              <span className="chatText">{msg.content || (busy && i === history.length - 1 ? '▋' : '')}</span>
+              {stageMatch && <ApplyStagedButton stageId={stageMatch[1]} />}
+            </div>
+          );
+        })}
+      </div>
+      <div className="chatSessionModes">
+        {WORKFLOW_MODES.map(mode => (
+          <button
+            key={mode.id}
+            type="button"
+            disabled={busy}
+            onClick={() => setWorkflowMode(mode.id)}
+            className={`workflowBtn${workflowMode === mode.id ? ` active ${mode.accent}` : ''}`}
+          >
+            {mode.label}
+          </button>
+        ))}
+      </div>
+      {attachedFiles?.length > 0 && (
+        <div className="attachChips">
+          {attachedFiles.map((f, i) => (
+            <span key={i} className={`attachChip${f.type === 'folder' ? ' folderChip' : ''}`}>
+              <span className="attachChipLabel" title={f.path || f.name}>{f.type === 'folder' ? '📁 ' : ''}{f.name.split(/[\\/]/).filter(Boolean).pop() || f.name}{f.type === 'folder' ? '/' : ''}</span>
+              <button type="button" className="attachChipRemove" onClick={() => onRemoveFile(i)}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <form className="chatSessionForm" onSubmit={onSubmit}>
+        <textarea
+          className="chatSessionInput"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          placeholder={busy ? 'Maverick is responding...' : 'Enter command or ask Maverick... (Shift+Enter for new line)'}
+          disabled={busy}
+          rows={3}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(e); } }}
+        />
+        <div className="chatSessionActions">
+          <button type="button" className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Attach files">⊕ FILES</button>
+          <button type="button" className="attachBtn" onClick={handleFolderAdd} title="Attach folder by path">⊕ FOLDER</button>
+          {busy
+            ? <button type="button" className="stopBtn" onClick={onStop}>[ STOP ]</button>
+            : <button type="submit" className="sendBtn" disabled={!input.trim()}>SEND</button>
+          }
+          {history.length > 0 && !busy && (
+            <button type="button" className="clearChatBtn" onClick={onClear}>CLR</button>
+          )}
+        </div>
+      </form>
+    </Panel>
+  );
+}
+
+function OrchestratorPage({ modelStatus, chatSession }) {
   const orchestratorStatus = useOrchestratorStatus();
   const [idea, setIdea] = useState('Build an app with my standard tech stack that tells me where the closest ice cream shop is when it is 100 degrees outside.');
   const [activeRun, setActiveRun] = useState(null);
   const [workerBrief, setWorkerBrief] = useState(null);
   const [taskRuns, setTaskRuns] = useState([]);
+  const [memoryContext, setMemoryContext] = useState({ state: 'loading', memories: [], results: [], typeCounts: {}, warnings: [] });
   const [busy, setBusy] = useState(false);
   const [briefBusyId, setBriefBusyId] = useState(null);
   const [reviewBusyId, setReviewBusyId] = useState(null);
@@ -621,6 +878,24 @@ function OrchestratorPage({ modelStatus }) {
   useEffect(() => {
     setTaskRuns(orchestratorStatus.taskRuns || []);
   }, [orchestratorStatus.taskRuns]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMemory() {
+      try {
+        const next = await queryMemory(idea);
+        if (!cancelled) setMemoryContext({ ...next, error: null });
+      } catch (nextError) {
+        if (!cancelled) setMemoryContext((current) => ({ ...current, state: 'error', error: nextError.message }));
+      }
+    }
+    loadMemory();
+    const timer = setTimeout(loadMemory, 1200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [idea]);
 
   async function handlePlan(event) {
     event.preventDefault();
@@ -679,21 +954,22 @@ function OrchestratorPage({ modelStatus }) {
 
   return (
     <div className="orchestratorPage">
-      <Panel title="AI ORCHESTRATOR V1" className="orchestratorCommand">
-        <form onSubmit={handlePlan}>
-          <textarea
-            value={idea}
-            onChange={(event) => setIdea(event.target.value)}
-            aria-label="Product idea"
-          />
-          <div className="orchestratorActions">
-            <button type="submit" disabled={busy || modelStatus.state !== 'online'}>
-              {busy ? 'Planning...' : 'Create Plan'}
-            </button>
-            <span>{modelStatus.state === 'online' ? `Lead worker online: ${compactModelName(modelStatus.model)}` : 'Local model offline'}</span>
-          </div>
-        </form>
-      </Panel>
+      <ChatSessionPanel
+        permanent
+        history={chatSession.history}
+        busy={chatSession.busy}
+        input={chatSession.input}
+        setInput={chatSession.setInput}
+        onSubmit={chatSession.onSubmit}
+        onCollapse={chatSession.onCollapse}
+        onStop={chatSession.onStop}
+        onClear={chatSession.onClear}
+        workflowMode={chatSession.workflowMode}
+        setWorkflowMode={chatSession.setWorkflowMode}
+        attachedFiles={chatSession.attachedFiles}
+        onAddFiles={chatSession.onAddFiles}
+        onRemoveFile={chatSession.onRemoveFile}
+      />
 
       <Panel title="WORKER ROUTER" className="workerRouter">
         <div className="workerGrid">
@@ -705,6 +981,29 @@ function OrchestratorPage({ modelStatus }) {
             </div>
           ))}
         </div>
+      </Panel>
+
+      <Panel title="MEMORY CONTEXT" className="memoryPanel">
+        <div className="memorySummary">
+          <strong>{memoryContext.count ?? memoryContext.memories?.length ?? 0} MEMORIES</strong>
+          <span>{memoryContext.source === 'repo-bridge' ? 'WINDOWS BRIDGE' : (memoryContext.state || 'UNKNOWN').toUpperCase()}</span>
+        </div>
+        <div className="memoryTypes">
+          {Object.entries(memoryContext.typeCounts || {}).map(([type, count]) => (
+            <span key={type}>{type}: {count}</span>
+          ))}
+        </div>
+        <div className="memoryMatches">
+          {(memoryContext.results || memoryContext.memories || []).slice(0, 4).map((memory) => (
+            <div className="memoryMatch" key={memory.id}>
+              <strong>{memory.id}</strong>
+              <span>{memory.type}</span>
+              <p>{memory.description}</p>
+            </div>
+          ))}
+        </div>
+        {memoryContext.warnings?.length ? <em className="memoryWarning">{memoryContext.warnings[0]}</em> : null}
+        {memoryContext.error ? <em className="memoryWarning">{memoryContext.error}</em> : null}
       </Panel>
 
       <Panel title="IMPLEMENTATION PLAN" className="planPanel">
@@ -726,7 +1025,7 @@ function OrchestratorPage({ modelStatus }) {
                   </button>
                   <button
                     type="button"
-                    disabled={!['local-qwen', 'hermes-qwen'].includes(task.worker) || briefBusyId === task.id}
+                    disabled={task.worker !== 'local-qwen' || briefBusyId === task.id}
                     onClick={() => handleTaskRun(task)}
                   >
                     {briefBusyId === task.id ? 'Running...' : 'Run + Log'}
@@ -798,18 +1097,705 @@ function OrchestratorPage({ modelStatus }) {
   );
 }
 
+function BuildChatPanel() {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [stagedId, setStagedId] = useState(null);
+  const [stagedFiles, setStagedFiles] = useState([]);
+  const [applyStatus, setApplyStatus] = useState('');
+  const abortRef = useRef(null);
+  const historyRef = useRef([]);
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || busy) return;
+    setInput('');
+    setStagedId(null);
+    setStagedFiles([]);
+    setApplyStatus('');
+
+    const userMsg = { role: 'user', content: text };
+    const pendingMsg = { role: 'assistant', content: '', statuses: [], qc: '', actions: [] };
+    setMessages(prev => [...prev, userMsg, pendingMsg]);
+    historyRef.current = [...historyRef.current, { role: 'user', content: text }].slice(-20);
+
+    setBusy(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let accum = '';
+    let qcAccum = '';
+
+    try {
+      const res = await fetch('/api/build-chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: text, history: historyRef.current.slice(0, -1) }),
+        signal: controller.signal
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') break;
+          try {
+            const evt = JSON.parse(raw);
+            setMessages(prev => {
+              const next = [...prev];
+              const last = { ...next[next.length - 1] };
+              if (evt.type === 'status') {
+                last.statuses = [...(last.statuses || []), evt.text];
+              } else if (evt.type === 'token') {
+                accum += evt.text;
+                last.content = accum;
+              } else if (evt.type === 'qc') {
+                qcAccum = evt.text;
+                last.qc = qcAccum;
+              } else if (evt.type === 'action') {
+                last.actions = [...(last.actions || []), evt];
+              } else if (evt.type === 'staged') {
+                setStagedId(evt.id);
+                setStagedFiles(evt.files || []);
+              }
+              next[next.length - 1] = last;
+              return next;
+            });
+          } catch {}
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setMessages(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { ...next[next.length - 1], content: `[Error: ${err.message}]` };
+          return next;
+        });
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+      if (accum) {
+        historyRef.current = [...historyRef.current, { role: 'assistant', content: accum }].slice(-20);
+      }
+    }
+  }
+
+  async function handleApply() {
+    if (!stagedId) return;
+    setApplyStatus('Applying...');
+    try {
+      const r = await fetch('/api/build/apply', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ stagedId })
+      });
+      const data = await r.json();
+      if (r.ok) {
+        setApplyStatus(`Applied ${data.applied || stagedFiles.length} file(s).`);
+        setStagedId(null);
+      } else {
+        setApplyStatus(`Apply failed: ${data.error || r.status}`);
+      }
+    } catch (err) {
+      setApplyStatus(`Apply error: ${err.message}`);
+    }
+  }
+
+  return (
+    <div className="buildChatPage">
+      <div className="panel buildChatPanel">
+        <div className="panelTitle">BUILD CHAT — CLAUDE ARCHITECT → QWEN EXECUTOR → NIM QC</div>
+
+        <div className="buildChatHistory" ref={bottomRef}>
+          {messages.length === 0 && (
+            <div className="buildChatEmpty">Describe a code change — Claude plans, Qwen executes, NIM reviews.</div>
+          )}
+          {messages.map((msg, i) => (
+            <div key={i} className={`buildChatMsg ${msg.role}`}>
+              {msg.role === 'user' ? (
+                <>
+                  <span className="buildChatRole">CMD</span>
+                  <span className="buildChatText">{msg.content}</span>
+                </>
+              ) : (
+                <>
+                  <span className="buildChatRole">BUILD</span>
+                  <div className="buildChatBody">
+                    {(msg.statuses || []).map((s, si) => (
+                      <div key={si} className="buildChatStatus">{s}</div>
+                    ))}
+                    {(msg.actions || []).map((a, ai) => (
+                      <div key={ai} className={`buildChatAction ${a.ok ? 'ok' : 'err'}`}>
+                        {a.ok ? '✓' : '✗'} {a.tool}({a.path})
+                      </div>
+                    ))}
+                    {msg.content && <div className="buildChatContent"><MavMarkdown content={msg.content} /></div>}
+                    {msg.qc && (
+                      <div className="buildChatQc">
+                        <span className="buildChatQcLabel">NIM QC</span>
+                        <pre className="buildChatQcText">{msg.qc}</pre>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+
+        {stagedId && (
+          <div className="buildChatStaged">
+            <span className="buildChatStagedLabel">STAGED: {stagedFiles.join(', ')}</span>
+            <button className="buildChatApplyBtn" onClick={handleApply} disabled={!!applyStatus}>
+              {applyStatus || 'APPLY TO WORKSPACE'}
+            </button>
+          </div>
+        )}
+        {!stagedId && applyStatus && (
+          <div className="buildChatAppliedNote">{applyStatus}</div>
+        )}
+
+        <form className="buildChatInputRow" onSubmit={handleSubmit}>
+          <input
+            className="chatInput"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Describe a code change..."
+            disabled={busy}
+            autoFocus
+          />
+          {busy
+            ? <button type="button" className="buildChatStopBtn" onClick={() => abortRef.current?.abort()}>STOP</button>
+            : <button type="submit" className="buildChatSendBtn" disabled={!input.trim()}>SEND</button>
+          }
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function HomePage({ modelStatus }) {
+  const orchestratorStatus = useOrchestratorStatus();
+  const seoWorkflow = useSeoWorkflow();
+  const [actionQueue, setActionQueue] = useState(null);
+  const [actionBusyId, setActionBusyId] = useState('');
+  const [actionResult, setActionResult] = useState(null);
+  const [listModal, setListModal] = useState(null);
+  const taskRuns = orchestratorStatus.taskRuns || [];
+  const workers = orchestratorStatus.workers || [];
+  const onlineWorkers = workers.filter((worker) => /online|available|manual/i.test(worker.state || '')).length;
+  const statusCounts = seoWorkflow.statusCounts || {};
+  const reports = seoWorkflow.reports || [];
+  const actions = actionQueue?.actions || seoWorkflow.workflowStatus?.actions?.actions || seoWorkflow.actions?.actions || [];
+  const actionSummary = actionQueue?.summary || seoWorkflow.workflowStatus?.actions?.summary || seoWorkflow.actions?.summary || {};
+  const nowMs = Date.now();
+  const sevenDaysAgoMs = nowMs - (7 * 24 * 60 * 60 * 1000);
+  const reportsLast7Days = reports.filter((report) => {
+    const reportTime = new Date(report.updatedAt).getTime();
+    return Number.isFinite(reportTime) && reportTime >= sevenDaysAgoMs;
+  });
+  const upcomingActions = actions
+    .filter((action) => {
+      const status = String(action.status || '').toLowerCase();
+      const done = String(action.completion?.completion_status || '').toLowerCase() === 'complete'
+        || String(action.completion?.definition_of_done || '').toLowerCase() === 'yes';
+      return !done && !['dry_run_ready', 'complete', 'completed', 'verified'].includes(status);
+    })
+    .sort((a, b) => {
+      const rank = { needs_approval: 0, approved: 1, blocked_access: 2, needs_review: 3 };
+      return (rank[a.status] ?? 9) - (rank[b.status] ?? 9);
+    });
+  const runHealth = seoWorkflow.runHealth || null;
+  const failedPhases = runHealth
+    ? Object.entries(runHealth).filter(([, v]) => v?.status === 'failed')
+    : [];
+  const faults = [
+    ...(seoWorkflow.faults || []),
+    ...(actionQueue?.error ? [actionQueue.error] : []),
+    ...(orchestratorStatus.error ? [orchestratorStatus.error] : [])
+  ];
+  const recentReports = reports
+    .slice()
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const visibleActions = upcomingActions.slice(0, 5);
+  const visibleReports = recentReports.slice(0, 5);
+  const visibleTaskRuns = taskRuns.slice(0, 5);
+  const activeWorkflow = seoWorkflow.activeWorkflow || {
+    name: 'SEO Automation',
+    phase: seoWorkflow.state || 'loading',
+    reportsGenerated: reportsLast7Days.length
+  };
+  function runHealthLabel(phase) {
+    return { research: 'RESEARCH', execute: 'EXECUTE', post_schedule: 'GBP SCHED' }[phase] || phase.toUpperCase();
+  }
+  function runAgeLabel(iso) {
+    if (!iso) return '';
+    const h = Math.round((Date.now() - new Date(iso).getTime()) / 3600000);
+    if (h < 1) return '< 1h ago';
+    if (h < 48) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  }
+
+  async function refreshActions() {
+    try {
+      setActionQueue(await querySeoActions());
+    } catch (error) {
+      setActionQueue((current) => ({ ...(current || {}), error: error.message }));
+    }
+  }
+
+  function renderActionRow(action) {
+    const isBusy = actionBusyId === action.id;
+    const isApproved = action.status === 'approved' || Boolean(action.approval);
+    const canApprove = action.status === 'needs_approval' && action.approval_required && !action.approval;
+    const canRunLive = Boolean(action.live_adapter) && isApproved;
+    const canApproveAndRun = Boolean(action.live_adapter) && canApprove;
+
+    return (
+      <div className="actionRow actionQueueRow" key={action.id}>
+        <div>
+          <strong>{action.title}</strong>
+          <span>{action.status} / {action.platform} / {action.risk}</span>
+          <em>{action.assigned_agent}</em>
+        </div>
+        <div className="actionButtons">
+          <button type="button" disabled={isBusy} onClick={() => handleDryRunAction(action.id)}>
+            Dry Run
+          </button>
+          <button
+            type="button"
+            disabled={isBusy || !canApprove}
+            onClick={() => handleApproveAction(action.id)}
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            disabled={isBusy || !canApproveAndRun}
+            onClick={() => handleApproveAndRunAction(action.id)}
+          >
+            Approve + Run
+          </button>
+          <button
+            type="button"
+            disabled={isBusy || !canRunLive}
+            onClick={() => handleLiveRunAction(action.id)}
+          >
+            Run Live
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderReportRow(report) {
+    return (
+      <div className="reportRow" key={report.name}>
+        <strong>{(report.name || '').replace(/_/g, ' ')}</strong>
+        <span>{new Date(report.updatedAt).toLocaleString()}</span>
+        <em>{report.displayTitle || report.headings?.[0] || report.summary?.[0] || 'Report ready'}</em>
+      </div>
+    );
+  }
+
+  function renderTaskRunRow(taskRun) {
+    return (
+      <div className="recentTaskRow" key={taskRun.id}>
+        <strong>{taskRun.taskTitle}</strong>
+        <span>{workerLabel(taskRun.worker)} / {taskRun.status}</span>
+      </div>
+    );
+  }
+
+  const modalConfig = listModal === 'actions'
+    ? { title: 'Upcoming Actions', count: upcomingActions.length, rows: upcomingActions.map(renderActionRow), empty: 'No upcoming actions detected.' }
+    : listModal === 'reports'
+      ? { title: 'Recent Reports', count: recentReports.length, rows: recentReports.map(renderReportRow), empty: 'No reports detected.' }
+      : listModal === 'tasks'
+        ? { title: 'Recent Task Runs', count: taskRuns.length, rows: taskRuns.map(renderTaskRunRow), empty: 'No task runs logged yet.' }
+        : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const next = await querySeoActions();
+        if (!cancelled) setActionQueue(next);
+      } catch (error) {
+        if (!cancelled) setActionQueue((current) => ({ ...(current || {}), error: error.message }));
+      }
+    }
+    load();
+    const timer = setInterval(load, 20000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  async function handleApproveAction(actionId) {
+    setActionBusyId(actionId);
+    try {
+      const result = await approveSeoAction(actionId, 'Approved from MCC action queue.');
+      setActionResult({ kind: 'approve', actionId, result });
+      await refreshActions();
+    } catch (error) {
+      setActionResult({ kind: 'error', actionId, error: error.message });
+    } finally {
+      setActionBusyId('');
+    }
+  }
+
+  async function handleDryRunAction(actionId) {
+    setActionBusyId(actionId);
+    try {
+      const result = await runSeoAction(actionId, false);
+      setActionResult({ kind: 'dry-run', actionId, result });
+      await refreshActions();
+    } catch (error) {
+      setActionResult({ kind: 'error', actionId, error: error.message });
+    } finally {
+      setActionBusyId('');
+    }
+  }
+
+  async function handleLiveRunAction(actionId) {
+    setActionBusyId(actionId);
+    try {
+      const result = await runSeoAction(actionId, true);
+      setActionResult({ kind: 'live-run', actionId, result });
+      await refreshActions();
+    } catch (error) {
+      setActionResult({ kind: 'error', actionId, error: error.message });
+    } finally {
+      setActionBusyId('');
+    }
+  }
+
+  async function handleApproveAndRunAction(actionId) {
+    setActionBusyId(actionId);
+    try {
+      const approval = await approveSeoAction(actionId, 'Approved and queued for live run from MCC action queue.');
+      const run = await runSeoAction(actionId, true);
+      setActionResult({ kind: 'approve-run', actionId, result: { approval, run } });
+      await refreshActions();
+    } catch (error) {
+      setActionResult({ kind: 'error', actionId, error: error.message });
+    } finally {
+      setActionBusyId('');
+    }
+  }
+
+  return (
+    <div className="homePage">
+      <Panel title="OPERATIONS COMMAND" className="homeHero">
+        <div className="homeHeroGrid">
+          <div>
+            <span>PRIMARY WORKFLOW</span>
+            <strong>{activeWorkflow.name}</strong>
+            <em>{activeWorkflow.phase}</em>
+          </div>
+          <div>
+            <span>AGENT FLEET</span>
+            <strong>{onlineWorkers} / {workers.length}</strong>
+            <em>{modelStatus.state === 'online' ? 'LOCAL AI READY' : 'LOCAL AI OFFLINE'}</em>
+          </div>
+          <div>
+            <span>7-DAY REPORTS</span>
+            <strong>{reportsLast7Days.length}</strong>
+            <em>{seoWorkflow.source === 'repo-bridge' ? 'WINDOWS BRIDGE' : (seoWorkflow.state || 'UNKNOWN').toUpperCase()}</em>
+          </div>
+          <div>
+            <span>FAULTS</span>
+            <strong>{faults.length}</strong>
+            <em>{faults.length ? 'NEEDS REVIEW' : 'CLEAR'}</em>
+          </div>
+          <div>
+            <span>LOCAL MODEL</span>
+            <strong style={{ fontSize: modelStatus.model ? '16px' : '30px' }}>
+              {modelStatus.model ? modelStatus.model.replace(/^[^/]+\//, '') : (modelStatus.state === 'loading' ? '...' : 'OFFLINE')}
+            </strong>
+            <em>{modelStatus.contextTokens != null ? `${modelStatus.contextTokens.toLocaleString()} CTX` : modelStatus.state.toUpperCase()}</em>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="ACTIVE WORKFLOWS" className="workflowPanel">
+        <div className="workflowCard">
+          <strong>{activeWorkflow.name}</strong>
+          <span>{activeWorkflow.phase}</span>
+          <em>{reportsLast7Days.length} reports in last 7 days</em>
+        </div>
+        <div className="workflowStats">
+          <span>Complete: {statusCounts.complete || 0}</span>
+          <span>Partial: {statusCounts.partial || 0}</span>
+          <span>Blocked: {statusCounts.blocked || 0}</span>
+          <span>Incomplete: {statusCounts.incomplete || 0}</span>
+          <span>Needs approval: {actionSummary.needs_approval || 0}</span>
+          <span>Access blocked: {actionSummary.blocked_access || 0}</span>
+        </div>
+        <div className={`workflowFaultStrip ${faults.length ? 'hasFaults' : ''}`}>
+          <span>{faults.length ? 'Faults / Blockers' : 'Faults'}</span>
+          <strong>{faults.length ? faults.length : 'Clear'}</strong>
+          <em>{faults[0] || 'No current workflow faults.'}</em>
+        </div>
+        {runHealth && (
+          <div className="runHealthStrip">
+            <span className="runHealthLabel">LAST RUNS</span>
+            <div className="runHealthPhases">
+              {Object.entries(runHealth).map(([phase, entry]) => (
+                <div key={phase} className={`runHealthPhase ${entry?.status === 'failed' ? 'failed' : 'ok'}`}>
+                  <span>{runHealthLabel(phase)}</span>
+                  <strong>{entry?.status === 'failed' ? '✗ FAILED' : '✓ OK'}</strong>
+                  <em>{runAgeLabel(entry?.at)}</em>
+                </div>
+              ))}
+            </div>
+            {failedPhases.length > 0 && (
+              <div className="runHealthAlert">
+                ⚠ {failedPhases.length} phase{failedPhases.length > 1 ? 's' : ''} failed — check logs before next Friday run
+              </div>
+            )}
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="AGENT FLEET" className="agentFleetPanel">
+        <div className="agentFleetList">
+          {workers.map((worker) => (
+            <div className="agentFleetRow" key={worker.id}>
+              <span className={/online|available|manual/i.test(worker.state || '') ? 'ok' : 'warn'} />
+              <strong>{workerLabel(worker.id)}</strong>
+              <em>{worker.state}</em>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel title="UPCOMING ACTIONS" className="actionsPanel">
+        <div className="panelListToolbar">
+          <span>{upcomingActions.length} total</span>
+          <button type="button" disabled={upcomingActions.length <= 5} onClick={() => setListModal('actions')}>View all</button>
+        </div>
+        <div className="actionList compactList">
+          {visibleActions.map(renderActionRow)}
+          {!upcomingActions.length ? <div className="emptyPlan">No upcoming actions detected.</div> : null}
+          {actionResult ? (
+            <div className={actionResult.kind === 'error' ? 'actionResult error' : 'actionResult'}>
+              {actionResult.kind === 'error'
+                ? actionResult.error
+                : `${actionResult.kind}: ${actionResult.result.status || actionResult.result.state || 'complete'}`}
+            </div>
+          ) : null}
+        </div>
+      </Panel>
+
+      <Panel title="RECENT REPORTS" className="reportsPanel">
+        <div className="panelListToolbar">
+          <span>{recentReports.length} total</span>
+          <button type="button" disabled={recentReports.length <= 5} onClick={() => setListModal('reports')}>View all</button>
+        </div>
+        <div className="reportList compactList">
+          {visibleReports.map(renderReportRow)}
+        </div>
+      </Panel>
+
+      <Panel title="RECENT TASK RUNS" className="recentTaskPanel">
+        <div className="panelListToolbar">
+          <span>{taskRuns.length} total</span>
+          <button type="button" disabled={taskRuns.length <= 5} onClick={() => setListModal('tasks')}>View all</button>
+        </div>
+        <div className="recentTaskList compactList">
+          {visibleTaskRuns.map(renderTaskRunRow)}
+          {!taskRuns.length ? <div className="emptyPlan">No task runs logged yet.</div> : null}
+        </div>
+      </Panel>
+
+      {modalConfig ? (
+        <div className="listModalOverlay" role="presentation" onClick={() => setListModal(null)}>
+          <section className="listModal" role="dialog" aria-modal="true" aria-label={modalConfig.title} onClick={(event) => event.stopPropagation()}>
+            <div className="listModalHead">
+              <div>
+                <span>{modalConfig.count} total</span>
+                <strong>{modalConfig.title}</strong>
+              </div>
+              <button type="button" onClick={() => setListModal(null)}>Close</button>
+            </div>
+            <div className="listModalBody">
+              {modalConfig.rows.length ? modalConfig.rows : <div className="emptyPlan">{modalConfig.empty}</div>}
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const WORKFLOW_MODES = [
+  { id: 'ask',   label: 'ASK MAVERICK',  accent: 'cyan'  },
+  { id: 'build', label: 'BUILD / FIX',   accent: 'amber' },
+  { id: 'ops',   label: 'OPERATIONS',    accent: 'green' },
+];
+
+const MAV_RAG_URL = 'http://192.168.1.12:8181/estimate';
+
 function App() {
+
   const modelStatus = useModelStatus();
+  const orchestratorStatus = useOrchestratorStatus();
   const { metrics, status } = useMetrics();
-  const [view, setView] = useState('hardware');
+
+  const [view, setView] = useState('home');
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [view]);
+  const [workflowMode, setWorkflowMode] = useState('ask');
+  const [chatHistory, setChatHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('mcc-chat-history') || '[]'); } catch { return []; }
+  });
+  const [chatInput, setChatInput] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatPanelOpen, setChatPanelOpen] = useState(false);
+  const [chatExpanded, setChatExpanded] = useState(false);
+  const chatAbortRef = useRef(null);
+  const maverickHistoryRef = useRef([]);
+  const [previewContent, setPreviewContent] = useState(null);
+  const [attachedFiles, setAttachedFiles] = useState([]);
+  const barFileInputRef = useRef(null);
+
+
+  const activeMode = WORKFLOW_MODES.find(m => m.id === workflowMode) || WORKFLOW_MODES[0];
+
+  function pushChat(messages) {
+    setChatHistory(prev => {
+      const next = typeof messages === 'function' ? messages(prev) : messages;
+      try { localStorage.setItem('mcc-chat-history', JSON.stringify(next.slice(-40))); } catch {}
+      return next;
+    });
+  }
+
+  async function handleChatSubmit(e) {
+    e.preventDefault();
+    if (!chatInput.trim() || chatBusy) return;
+    const userMsg = chatInput.trim();
+    setChatInput('');
+    setChatBusy(true);
+    setChatPanelOpen(true);
+    pushChat(prev => [...prev, { role: 'user', content: userMsg }, { role: 'assistant', content: '' }]);
+
+    const controller = new AbortController();
+    chatAbortRef.current = controller;
+
+    if (workflowMode === 'ask') {
+      try {
+        const history = maverickHistoryRef.current;
+        const res = await fetch(MAV_RAG_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ message: userMsg, history, top_k: 12 }),
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`RAG API ${res.status}`);
+        const data = await res.json();
+        const reply = data.reply || '[No response]';
+        maverickHistoryRef.current = [...history, { role: 'user', content: userMsg }, { role: 'assistant', content: reply }];
+        pushChat(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: 'assistant', content: reply };
+          return next;
+        });
+        if (isDocumentResponse(reply)) setPreviewContent(reply);
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          pushChat(prev => {
+            const next = [...prev];
+            next[next.length - 1] = { role: 'assistant', content: `[Error: ${err.message}]` };
+            return next;
+          });
+        }
+      } finally {
+        setChatBusy(false);
+        chatAbortRef.current = null;
+      }
+      return;
+    }
+
+    let accum = '';
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: userMsg, mode: workflowMode, history: chatHistory, attachments: attachedFiles }),
+        signal: controller.signal
+      });
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') continue;
+          try {
+            const tok = JSON.parse(raw);
+            const delta = tok.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              accum += delta;
+              pushChat(prev => {
+                const next = [...prev];
+                next[next.length - 1] = { role: 'assistant', content: accum };
+                return next;
+              });
+            }
+          } catch {}
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        pushChat(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: 'assistant', content: `[Error: ${err.message}]` };
+          return next;
+        });
+      }
+    } finally {
+      setChatBusy(false);
+      chatAbortRef.current = null;
+    }
+  }
+
   return (
     <DashboardViewContext.Provider value={[view, setView]}>
-      <main className="dashboard">
+      <main className="dashboard" data-theme="ops-glass" data-theme-saved="Rugged-Ops Command">
         <TopBar status={status} modelStatus={modelStatus} />
-        {view === 'hardware' ? (
-          <div className="mainGrid">
+        <div className="pageWrapper" key={view}>
+        {view === 'home' ? (
+          <HomePage modelStatus={modelStatus} />
+        ) : view === 'hardware' ? (
+          <div className="mainGrid hardwareGrid">
             <Workstation metrics={metrics} />
-            <ModelOps metrics={metrics} modelStatus={modelStatus} />
+            <ModelOps metrics={metrics} modelStatus={modelStatus} orchestratorStatus={orchestratorStatus} />
             <Network metrics={metrics} />
             <Server metrics={metrics} />
             <Storage metrics={metrics} />
@@ -817,10 +1803,140 @@ function App() {
           </div>
         ) : view === 'network' ? (
           <NetworkMapPage metrics={metrics} />
+        ) : view === 'seo' ? (
+          <SEOApprovalPage />
         ) : (
-          <OrchestratorPage modelStatus={modelStatus} />
+          <OrchestratorPage
+            modelStatus={modelStatus}
+            chatSession={{
+              expanded: chatExpanded,
+              history: chatHistory,
+              busy: chatBusy,
+              input: chatInput,
+              setInput: setChatInput,
+              onSubmit: handleChatSubmit,
+              onCollapse: () => setChatExpanded(false),
+              onStop: () => chatAbortRef.current?.abort(),
+              onClear: () => { pushChat([]); maverickHistoryRef.current = []; setPreviewContent(null); setAttachedFiles([]); },
+              workflowMode,
+              setWorkflowMode,
+              attachedFiles,
+              onAddFiles: (items) => setAttachedFiles(prev => [...prev, ...items]),
+              onRemoveFile: (i) => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i)),
+            }}
+          />
         )}
         {status.error ? <div className="errorStrip">{status.error}</div> : null}
+
+        {previewContent && (
+          <div className="docPreview">
+            <div className="docPreviewHeader">
+              <span className="docPreviewLabel">DOCUMENT PREVIEW</span>
+              <button className="docPreviewClose" onClick={() => setPreviewContent(null)}>✕ Close</button>
+            </div>
+            <div className="docPreviewBody">
+              <MavMarkdown content={previewContent} />
+            </div>
+          </div>
+        )}
+        </div>{/* /pageWrapper */}
+
+        {view !== 'orchestrator' && <div className="commandBar">
+          {chatPanelOpen && chatHistory.length > 0 && (
+            <div className="chatHistory">
+              {chatHistory.slice(-6).map((msg, i) => {
+                const content = msg.content || (chatBusy && i === chatHistory.length - 1 ? '...' : '');
+                const isDoc = msg.role === 'assistant' && isDocumentResponse(msg.content);
+                return (
+                  <div key={i} className={`chatMsg ${msg.role}`}>
+                    <span className="chatRole">{msg.role === 'user' ? 'CMD' : 'MAV'}</span>
+                    <span className="chatText">
+                      {isDoc ? msg.content.slice(0, 120) + '…' : content}
+                    </span>
+                    {isDoc && (
+                      <button className="chatPreviewBtn" onClick={() => setPreviewContent(msg.content)}>
+                        ↑ Preview
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="workflowStrip">
+            {WORKFLOW_MODES.map(mode => (
+              <button
+                key={mode.id}
+                type="button"
+                disabled={chatBusy}
+                onClick={() => setWorkflowMode(mode.id)}
+                className={`workflowBtn${workflowMode === mode.id ? ` active ${mode.accent}` : ''}`}
+              >
+                {mode.label}
+              </button>
+            ))}
+            <span className="modelRouteBadge">
+              {activeMode.model === 'RAG' ? '◈ MAV RAG' : activeMode.model === 'GEMINI' ? '⬡ GEMINI FLASH' : '◈ LOCAL QWEN'}
+            </span>
+            <button
+              type="button"
+              className="expandChatBtn"
+              onClick={() => { setChatExpanded(true); setView('orchestrator'); }}
+              title="Open full chat window in Orchestrator tab"
+            >
+              ↗ EXPAND
+            </button>
+          </div>
+          {attachedFiles.length > 0 && (
+            <div className="attachChips barChips">
+              {attachedFiles.map((f, i) => (
+                <span key={i} className={`attachChip${f.type === 'folder' ? ' folderChip' : ''}`}>
+                  <span className="attachChipLabel" title={f.path || f.name}>{f.type === 'folder' ? '📁 ' : ''}{f.name.split(/[\\/]/).filter(Boolean).pop() || f.name}{f.type === 'folder' ? '/' : ''}</span>
+                  <button type="button" className="attachChipRemove" onClick={() => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i))}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <form className="chatForm" onSubmit={handleChatSubmit}>
+            <input ref={barFileInputRef} type="file" multiple style={{ display: 'none' }} onChange={async e => {
+              const files = Array.from(e.target.files || []);
+              let total = 0;
+              const items = [];
+              for (const file of files.slice(0, 20)) {
+                if (total >= MAX_TOTAL_BYTES) break;
+                const raw = await readFileText(file);
+                const content = raw.slice(0, MAX_FILE_BYTES);
+                items.push({ name: file.name, content });
+                total += content.length;
+              }
+              if (items.length) setAttachedFiles(prev => [...prev, ...items]);
+              e.target.value = '';
+            }} />
+            <span className="chatPrompt">CMD &gt;</span>
+            <input
+              type="text"
+              className="chatInput"
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              placeholder={chatBusy ? 'Maverick is responding...' : 'Enter command or ask Maverick...'}
+              disabled={chatBusy}
+            />
+            <button type="button" className="attachBtn compact" title="Attach files as context" onClick={() => barFileInputRef.current?.click()}>⊕</button>
+            {chatBusy ? (
+              <button type="button" className="stopBtn" onClick={() => chatAbortRef.current?.abort()}>[ STOP ]</button>
+            ) : (
+              <button type="submit" className="sendBtn" disabled={!chatInput.trim()}>SEND</button>
+            )}
+            {chatHistory.length > 0 && (
+              <button type="button" className="chatToggleBtn" onClick={() => setChatPanelOpen(p => !p)}>
+                {chatPanelOpen ? '▼' : '▲'}
+              </button>
+            )}
+            {chatHistory.length > 0 && !chatBusy && (
+              <button type="button" className="clearChatBtn" onClick={() => { pushChat([]); maverickHistoryRef.current = []; setPreviewContent(null); setAttachedFiles([]); }}>CLR</button>
+            )}
+          </form>
+        </div>}
       </main>
     </DashboardViewContext.Provider>
   );

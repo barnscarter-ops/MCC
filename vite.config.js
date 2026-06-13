@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const prometheusUrl = process.env.PROMETHEUS_URL || 'http://192.168.1.12:9090';
+const apiUrl = process.env.MAV_API_URL || 'http://localhost:3011';
 
 export default defineConfig({
   plugins: [react()],
@@ -16,10 +16,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api/query': {
-        target: prometheusUrl,
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/query/, '/api/v1/query')
+      '/api': {
+        target: apiUrl,
+        changeOrigin: true
       }
     }
   }
