@@ -9,7 +9,7 @@ Single source of truth for how all three projects connect. Update this at the en
 | Project | Path | Repo |
 |---|---|---|
 | MCC Dashboard | `C:\Workspace\Active\homelab-noc-dashboard\homelab-noc-dashboard\homelab-noc-dashboard` | github.com/barnscarter-ops/MCC — branch `main` |
-| LLaMA Server | `C:\llama-cpp-server` | git — branch `main` |
+| LLaMA Server | `C:\Workspace\Infrastructure\llama-cpp-server` | git — branch `main` |
 | SEO Agents App | `C:\Workspace\Active\SEO-Agents-App` | git — separate repo |
 
 ---
@@ -24,7 +24,7 @@ Single source of truth for how all three projects connect. Update this at the en
 | VRAM at load | ~11 GB / 16.4 GB (67%) |
 | TG speed | ~29.4 t/s (hardware ceiling) |
 | Workflow speed | ~20-22 t/s |
-| Startup script | `C:\llama-cpp-server\start-qwen3-14b-bg.ps1` |
+| Startup script | `C:\Workspace\Infrastructure\llama-cpp-server\start-qwen3-14b-bg.ps1` |
 
 ---
 
@@ -128,7 +128,7 @@ cd "C:\Workspace\Active\SEO-Agents-App"
 git add -p && git commit -m "session: <brief description>"
 
 # 3. Commit llama server (if changed)
-cd "C:\llama-cpp-server"
+cd "C:\Workspace\Infrastructure\llama-cpp-server"
 git add -p && git commit -m "session: <brief description>"
 
 # 4. Tell Claude to update memory
