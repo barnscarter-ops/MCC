@@ -724,9 +724,9 @@ function NetworkMapPage({ metrics }) {
             {/* Switch → Server */}
             <path className={`staticLink ${serverOnline ? serverClass : 'danger'}`} d="M607 477 L607 496 L795 496 L795 514" />
             <path className={`flowLink ${serverOnline ? serverClass : 'danger'}`} d="M607 477 L607 496 L795 496 L795 514" />
-            {/* Workstation ↔ Server LAN segment */}
-            <path className={`staticLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 556 L795 556" />
-            <path className={`flowLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 556 L795 556" />
+            {/* Workstation ↔ Server LAN segment — U-route below Deco Mesh */}
+            <path className={`staticLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 551 L205 614 L795 614 L795 551" />
+            <path className={`flowLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 551 L205 614 L795 614 L795 551" />
           </svg>
         </div>
       </Panel>
