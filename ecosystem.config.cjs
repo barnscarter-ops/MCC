@@ -17,6 +17,8 @@ module.exports = {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
         NVIDIA_NIM_API_KEY: process.env.NVIDIA_NIM_API_KEY || '',
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+        GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+        PROMETHEUS_URL: process.env.PROMETHEUS_URL || 'http://192.168.1.12:9090',
         MAV_EXTRA_ROOTS: process.env.MAV_EXTRA_ROOTS || '',
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
