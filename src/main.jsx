@@ -1189,8 +1189,20 @@ function FolderPickerModal({ onSelect, onClose }) {
     <div className="folderPickerOverlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="folderPickerModal">
         <div className="folderPickerHeader">
-          <span className="folderPickerTitle">Select Folder</span>
+          <span className="folderPickerTitle">PC DRIVES</span>
           <button className="folderPickerClose" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="folderPickerDrives">
+          {['C:\\', 'D:\\', 'E:\\'].map(drive => (
+            <button
+              key={drive}
+              className={`folderPickerDriveBtn${currentPath.toUpperCase().startsWith(drive.toUpperCase()) ? ' active' : ''}`}
+              onClick={() => loadPath(drive)}
+            >
+              {drive.replace('\\', ':')} {drive === 'C:\\' ? 'SYSTEM' : drive === 'D:\\' ? 'STORAGE' : 'ARCHIVE'}
+            </button>
+          ))}
         </div>
 
         <div className="folderPickerCrumbs">
