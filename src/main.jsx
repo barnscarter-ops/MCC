@@ -5,6 +5,7 @@ import { useDeployStatus, useMetrics, useModelStatus, useOrchestratorStatus, use
 import {
   approveSeoAction,
   createLocalWorkerBrief,
+  api,
   createOrchestratorPlan,
   createTaskRun,
   queryMemory,
@@ -765,7 +766,7 @@ function ApplyStagedButton({ stageId }) {
   async function apply() {
     setState('busy');
     try {
-      const res = await fetch('/api/build/apply', {
+      const res = await fetch(api('/api/build/apply'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ id: stageId }),
@@ -1304,7 +1305,7 @@ function BuildChatPanel() {
     let qcAccum = '';
 
     try {
-      const res = await fetch('/api/build-chat', {
+      const res = await fetch(api('/api/build-chat'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ prompt: text, history: historyRef.current.slice(0, -1), attachments: attachedFolders }),
@@ -1915,7 +1916,7 @@ const WORKFLOW_MODES = [
   { id: 'ops',   label: 'OPERATIONS',    accent: 'green', tooltip: 'Trigger pipelines, run agents, manage automation workflows' },
 ];
 
-const MAV_RAG_URL = '/api/rag';
+const MAV_RAG_URL = api('/api/rag');
 
 function App() {
 
@@ -2006,7 +2007,7 @@ function App() {
     }
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(api('/api/chat'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ prompt: userMsg, mode: workflowMode, history: chatHistory, attachments: attachedFiles }),

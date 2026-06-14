@@ -4,7 +4,7 @@ import { PROM_QUERIES } from '../config/metrics.js';
 // Locally, it's empty and relative /api/ paths hit the local server via Vite's dev proxy.
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
-function api(path) {
+export function api(path) {
   return `${API_BASE}${path}`;
 }
 
