@@ -1915,7 +1915,7 @@ const WORKFLOW_MODES = [
   { id: 'ops',   label: 'OPERATIONS',    accent: 'green', tooltip: 'Trigger pipelines, run agents, manage automation workflows' },
 ];
 
-const MAV_RAG_URL = 'http://192.168.1.12:8181/estimate';
+const MAV_RAG_URL = '/api/rag';
 
 function App() {
 
@@ -1997,6 +1997,13 @@ function App() {
     }
 
     let accum = '';
+    if (workflowMode === 'build') {
+      pushChat(prev => {
+        const next = [...prev];
+        next[next.length - 1] = { role: 'assistant', content: '⟳ Claude director is planning — this takes 10–20s...' };
+        return next;
+      });
+    }
 
     try {
       const response = await fetch('/api/chat', {

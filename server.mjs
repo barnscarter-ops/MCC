@@ -9,6 +9,7 @@ const distDir = path.join(__dirname, 'dist');
 const port = Number(process.env.PORT || 3011);
 const deployStartedAt = new Date().toISOString();
 const prometheusUrl = process.env.PROMETHEUS_URL || 'http://192.168.1.12:9090';
+const ragUrl = process.env.MAV_RAG_URL || 'http://192.168.1.12:8181';
 const llamaServerUrl = process.env.LLAMA_SERVER_URL || 'http://127.0.0.1:8080';
 const localModel = process.env.LOCAL_MODEL || 'qwen3-14b';
 const repoBridgeUrl = process.env.MAV_REPO_BRIDGE_URL || '';
@@ -1980,6 +1981,36 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/chat' && req.method === 'POST') {
     await handleChat(req, res);
+    return;
+  }
+  if (url.pathname === '/api/rag' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      const upstream = await fetch(new URL('/estimate', ragUrl), {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      clearTimeout(timeout);
+      const data = await upstream.json();
+      sendJson(res, upstream.status, data);
+    } catch (err) {
+      sendJson(res, 502, { error: err.message });
+    }
+    return;
+  }
+  if (url.pathname === '/api/rag/stats') {
+    try {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 3000);
+      const upstream = await fetch(new URL('/stats', ragUrl), { signal: controller.signal });
+      sendJson(res, upstream.status, await upstream.json());
+    } catch (err) {
+      sendJson(res, 502, { error: err.message });
+    }
     return;
   }
   if (url.pathname === '/api/deploy/status') {

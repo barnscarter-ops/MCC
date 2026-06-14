@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-const API_BASE = 'http://192.168.1.12:8181';
+const API_BASE = '';
 
 function MsgBubble({ msg }) {
   const isUser = msg.role === 'user';
@@ -37,7 +37,7 @@ export default function MaverickPage() {
   const textareaRef = useRef(null);
 
   useEffect(() => {
-    fetch(`${API_BASE}/stats`)
+    fetch(`/api/rag/stats`)
       .then(r => r.json())
       .then(setStats)
       .catch(() => setStats(null));
@@ -58,7 +58,7 @@ export default function MaverickPage() {
     setError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/estimate`, {
+      const res = await fetch(`/api/rag`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
