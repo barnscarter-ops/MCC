@@ -6,11 +6,11 @@ Single source of truth for how all three projects connect. Update this at the en
 
 ## Projects
 
-| Project | Path | Repo |
-|---|---|---|
-| MCC Dashboard | `C:\Workspace\Active\homelab-noc-dashboard\homelab-noc-dashboard\homelab-noc-dashboard` | git — branch `codex/mcc-memory-layer` |
-| LLaMA Server | `C:\llama-cpp-server` | git — branch `main` |
-| SEO Agents App | `C:\Workspace\Active\SEO-Agents-App` | git — separate repo |
+| Project | Path | Repo | Remote |
+|---|---|---|---|
+| MCC Dashboard | `C:\Workspace\Active\homelab-noc-dashboard\homelab-noc-dashboard\homelab-noc-dashboard` | git — branch `main` | `github.com/barnscarter-ops/MCC` |
+| LLaMA Server | `C:\llama-cpp-server` | git — branch `main` | (confirm on GitHub) |
+| SEO Agents App | `C:\Workspace\Active\SEO-Agents-App` | git — separate repo | on GitHub |
 
 ---
 
@@ -79,5 +79,43 @@ git add -p && git commit -m "session: <brief description>"
 
 ---
 
+## Vercel Deployment
+
+| Setting | Value |
+|---|---|
+| Project | `homelab-noc-dashboard` |
+| Project ID | `prj_cu8Im5rWsAhYJPQj8aaEWqdzCYuG` |
+| Team | `barnscarter-ops-projects` (`team_PU4iVzo6aSfn8SG0BJYETfkc`) |
+| Production URL | `homelab-noc-dashboard.vercel.app` |
+| Deployment method | `vercel deploy --prod` from CartersPC (not auto-deploy) |
+| Key env var | `VITE_API_BASE=https://carterspc.tailf72e3f.ts.net` (set in Vercel project settings) |
+
+---
+
+## Tailscale Funnel
+
+| Setting | Value |
+|---|---|
+| URL | `https://carterspc.tailf72e3f.ts.net` |
+| Target | CartersPC port 3000 (server.mjs / mav-console) |
+| Status | Active — confirmed HTTP 200 on 2026-06-14 |
+| CORS | Configured in server.mjs to allow Vercel origin |
+
+---
+
+## Known Issues (as of 2026-06-14)
+
+- **MAV Bridge offline**: `mav-bridge` PM2 process runs `SEO-Agents-App/scripts/mav-bridge.mjs` on port 8790. Needs `SEO-Agents-App/.env` to be correctly populated. Check with `pm2 logs mav-bridge`.
+- **SEO Pipeline FETCH FAILED**: Downstream of mav-bridge being offline. Will self-resolve once bridge is healthy.
+- **Architecture complexity**: SEO status goes Vercel → Tailscale → server.mjs → mav-bridge → SEO-Agents-App (4 hops). Needs simplification audit.
+
+---
+
+## Pending Audit (next session — do locally)
+
+All three repos need an end-to-end review to find duplicated logic, orphaned code, and unnecessary indirection introduced while rebuilding across scattered folders. Start from SEO-Agents-App and map what each service actually owns vs. proxies.
+
+---
+
 ## Last Updated
-2026-06-12 — Model switched Q6_K_L → Q4_K_L, ctx 32768 → 16384. Benchmarked and confirmed 29.4 t/s TG ceiling. 35B model deleted.
+2026-06-14 — MCC pushed to GitHub (barnscarter-ops/MCC, main). Vercel deployment restored with latest code. Tailscale Funnel confirmed active. MAV Bridge offline — needs local debugging. Full architecture audit planned for next local session.
