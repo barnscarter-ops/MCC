@@ -145,53 +145,80 @@ function compactModelName(name) {
   return name.replace(/^qwen/i, 'Qwen').replace(/-/g, ' ');
 }
 
-function TopBar({ status, modelStatus }) {
+const NAV_ITEMS = [
+  { id: 'home', label: 'Home', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+  )},
+  { id: 'hardware', label: 'Hardware', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+  )},
+  { id: 'network', label: 'Network', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><circle cx="12" cy="5" r="3"/><circle cx="4" cy="19" r="3"/><circle cx="20" cy="19" r="3"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="13" x2="4" y2="16"/><line x1="12" y1="13" x2="20" y2="16"/></svg>
+  )},
+  { id: 'orchestrator', label: 'Orchestrator', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+  )},
+  { id: 'seo', label: 'SEO Pipeline', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+  ), badge: true },
+];
+
+function Sidebar({ status, modelStatus }) {
   const [view, setView] = useDashboardView();
   const deployStatus = useDeployStatus();
+  const deployOk = deployStatus.state === 'ok';
   const time = useMemo(() => {
     const now = status.updatedAt || new Date();
-    return new Intl.DateTimeFormat(undefined, {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    }).format(now);
+    return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(now);
   }, [status.updatedAt]);
-  const deployTime = useMemo(() => {
-    if (!deployStatus.deployedAt) return '--:--';
-    return new Intl.DateTimeFormat(undefined, {
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(new Date(deployStatus.deployedAt));
-  }, [deployStatus.deployedAt]);
-  const deployOk = deployStatus.state === 'ok';
+
   return (
-    <header className="topBar">
-      <div className="clockBlock">
-        <div>{time}</div>
-        <span>{status.state === 'online' ? 'PROMETHEUS ONLINE' : status.state.toUpperCase()}</span>
+    <aside className="sidebar">
+      <div className="sidebarLogo">
+        <img src="/assets/maverick-core-commander-logo.png" alt="Maverick Core Commander" className="sidebarLogoImg" />
+        <span className="sidebarLogoCollapsed">M</span>
       </div>
-      <div className="headerTab">
-        <div className="brandMark">
-          <img src="/assets/maverick-core-commander-logo.png" alt="Maverick Core Commander" />
+
+      <nav className="sidebarNav" aria-label="Dashboard view">
+        {NAV_ITEMS.map(item => (
+          <button
+            key={item.id}
+            className={`sidebarNavItem${view === item.id ? ' active' : ''}`}
+            onClick={() => setView(item.id)}
+          >
+            <span className="sidebarNavIcon">{item.icon}</span>
+            <span className="sidebarNavLabel">{item.label}</span>
+            {item.badge && <span className="sidebarNavBadge" />}
+          </button>
+        ))}
+      </nav>
+
+      <div className="sidebarFooter">
+        <div className="sidebarSystemStatus">
+          <div className={`sidebarStatusRow ${status.state === 'online' ? 'online' : 'offline'}`}>
+            <span className="sidebarStatusDot" />
+            <div className="sidebarStatusInfo">
+              <span className="sidebarStatusLabel">PROMETHEUS</span>
+              <span className="sidebarStatusValue">{time}</span>
+            </div>
+          </div>
+          <div className={`sidebarStatusRow ${modelStatus.state === 'online' ? 'online' : 'offline'}`}>
+            <span className="sidebarStatusDot" />
+            <div className="sidebarStatusInfo">
+              <span className="sidebarStatusLabel">LOCAL MODEL</span>
+              <span className="sidebarStatusValue">{compactModelName(modelStatus.model)}</span>
+            </div>
+          </div>
+          <div className={`sidebarStatusRow ${deployOk ? 'online' : 'offline'}`}>
+            <span className="sidebarStatusDot" />
+            <div className="sidebarStatusInfo">
+              <span className="sidebarStatusLabel">DEPLOY</span>
+              <span className="sidebarStatusValue">{deployOk ? 'OK' : 'CHECKING…'}</span>
+            </div>
+          </div>
         </div>
-        <nav className="viewToggle" aria-label="Dashboard view">
-          <button className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}>Home</button>
-          <button className={view === 'hardware' ? 'active' : ''} onClick={() => setView('hardware')}>Hardware</button>
-          <button className={view === 'network' ? 'active' : ''} onClick={() => setView('network')}>Network Map</button>
-          <button className={view === 'orchestrator' ? 'active' : ''} onClick={() => setView('orchestrator')}>Orchestrator</button>
-          <button className={view === 'seo' ? 'active' : ''} onClick={() => setView('seo')}>SEO Pipeline</button>
-        </nav>
       </div>
-      <div className={`deployStatus ${deployOk ? 'online' : 'offline'}`}>
-        <strong>{deployOk ? 'DEPLOY OK' : 'DEPLOY ...'}</strong>
-        <span>{deployTime}</span>
-      </div>
-      <div className={`agentStatus ${modelStatus.state === 'online' ? 'online' : 'offline'}`}>
-        LOCAL MODEL: <strong>{compactModelName(modelStatus.model)}</strong>
-        <em>|</em>
-        <span>{modelStatus.state.toUpperCase()}</span>
-      </div>
-    </header>
+    </aside>
   );
 }
 
@@ -607,19 +634,38 @@ function NetworkMapPage({ metrics }) {
     <div className="mapPage">
       <Panel title="LIVE NETWORK MAP" className="mapPanel">
         <div className="topologyCanvas">
+          {/* Tier zone labels */}
+          <div className="tierChip" style={{top: 12, left: 14}}>WAN / INTERNET</div>
+          <div className="tierChip" style={{top: 374, left: 14}}>SWITCH CORE</div>
+          <div className="tierChip" style={{top: 530, left: 14}}>ENDPOINTS</div>
+          {/* Horizontal tier dividers */}
+          <div className="tierDivider" style={{top: 362}} />
+          <div className="tierDivider" style={{top: 518}} />
+          {/* Link speed labels */}
+          <div className="linkLabel" style={{top: 106, left: 'calc(50% + 120px)'}}>AT&T FIBER</div>
+          <div className="linkLabel" style={{top: 230, left: 'calc(50% + 120px)'}}>WAN UPLINK</div>
+          <div className="linkLabel" style={{top: 340, left: 'calc(50% + 120px)'}}>GW → CORE</div>
+          <div className="linkLabel" style={{top: 487, left: '28%'}}>P3 · 2.5 Gb</div>
+          <div className="linkLabel" style={{top: 487, left: 'calc(50% + 120px)'}}>P2 · 1 Gb</div>
+          <div className="linkLabel" style={{top: 487, right: '14%'}}>P1 · 2.5 Gb</div>
+
           <div className="mapNode isp">
+            <span className="nodeTypeBadge">PROVIDER</span>
             <span>2.5Gb AT&T Fiber</span>
             <strong>ISP LINK</strong>
           </div>
           <div className="mapNode internet">
+            <span className="nodeTypeBadge">CLOUD</span>
             <span>Internet</span>
             <strong>WAN</strong>
           </div>
           <div className="mapNode router">
+            <span className="nodeTypeBadge">GATEWAY</span>
             <span>Gateway Router</span>
             <strong>{gatewayRate} DOWN</strong>
           </div>
           <div className="mapNode switch">
+            <span className="nodeTypeBadge">CORE SWITCH</span>
             <span>10Gb Network Switch</span>
             <strong>24 PORT</strong>
             <div className="mapPorts">
@@ -641,36 +687,46 @@ function NetworkMapPage({ metrics }) {
             <span className={`portAnchor port24 ${gatewayClass}`} title="Port 24" />
           </div>
           <div className={`mapNode workstationNode ${pcOnline ? 'online' : 'offline'}`}>
-            <span>Main Workstation</span>
-            <strong>Port 3 / 2.5Gb</strong>
+            <span className="nodeTypeBadge">WORKSTATION</span>
+            <span>Workstation</span>
+            <strong>Port 3 · 2.5 Gb</strong>
             <em>CPU {Math.round(clampPercent(metrics.pcCpu))}% / RAM {Math.round(clampPercent(metrics.pcRam))}%</em>
           </div>
           <div className={`mapNode serverNode ${serverOnline ? 'online' : 'offline'}`}>
-            <span>HP ProDesk Server</span>
-            <strong>Port 1 / 2.5Gb</strong>
+            <span className="nodeTypeBadge">SERVER</span>
+            <span>Proxmox Server</span>
+            <strong>Port 1 · 2.5 Gb</strong>
             <em>CPU {Math.round(clampPercent(metrics.serverCpu))}% / RAM {Math.round(clampPercent(metrics.serverRam))}%</em>
           </div>
           <div className="mapNode meshNode">
+            <span className="nodeTypeBadge">WIRELESS AP</span>
             <span>x25 Deco Mesh</span>
-            <strong>Port 2 / 1Gb</strong>
+            <strong>Port 2 · 1 Gb</strong>
             <em>Wireless Clients</em>
           </div>
 
-          <svg className="mapLines" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden="true">
-            <path className={`staticLink ${gatewayClass}`} d="M500 62 L500 105" />
-            <path className={`staticLink ${gatewayClass}`} d="M500 150 L500 205" />
-            <path className={`staticLink ${gatewayClass}`} d="M500 220 L500 238" />
-            <path className={`staticLink ${pcOnline ? pcClass : 'danger'}`} d="M393 346 L393 386 L205 386 L205 410" />
-            <path className={`staticLink ${meshClass}`} d="M500 346 L500 438" />
-            <path className={`staticLink ${serverOnline ? serverClass : 'danger'}`} d="M607 346 L607 386 L795 386 L795 410" />
-            <path className={`flowLink ${gatewayClass}`} d="M500 62 L500 105" />
-            <path className={`flowLink ${gatewayClass}`} d="M500 150 L500 205" />
-            <path className={`flowLink ${gatewayClass}`} d="M500 220 L500 238" />
-            <path className={`flowLink ${pcOnline ? pcClass : 'danger'}`} d="M393 346 L393 386 L205 386 L205 410" />
-            <path className={`flowLink ${meshClass}`} d="M500 346 L500 438" />
-            <path className={`flowLink ${serverOnline ? serverClass : 'danger'}`} d="M607 346 L607 386 L795 386 L795 410" />
-            <path className={`staticLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 410 L795 410" />
-            <path className={`flowLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 410 L795 410" />
+          <svg className="mapLines" viewBox="0 0 1000 640" preserveAspectRatio="none" aria-hidden="true">
+            {/* ISP → Internet */}
+            <path className={`staticLink ${gatewayClass}`} d="M500 93 L500 130" />
+            <path className={`flowLink ${gatewayClass}`} d="M500 93 L500 130" />
+            {/* Internet → Router */}
+            <path className={`staticLink ${gatewayClass}`} d="M500 210 L500 248" />
+            <path className={`flowLink ${gatewayClass}`} d="M500 210 L500 248" />
+            {/* Router → Switch */}
+            <path className={`staticLink ${gatewayClass}`} d="M500 330 L500 367" />
+            <path className={`flowLink ${gatewayClass}`} d="M500 330 L500 367" />
+            {/* Switch → Workstation */}
+            <path className={`staticLink ${pcOnline ? pcClass : 'danger'}`} d="M393 477 L393 496 L205 496 L205 514" />
+            <path className={`flowLink ${pcOnline ? pcClass : 'danger'}`} d="M393 477 L393 496 L205 496 L205 514" />
+            {/* Switch → Mesh */}
+            <path className={`staticLink ${meshClass}`} d="M500 477 L500 514" />
+            <path className={`flowLink ${meshClass}`} d="M500 477 L500 514" />
+            {/* Switch → Server */}
+            <path className={`staticLink ${serverOnline ? serverClass : 'danger'}`} d="M607 477 L607 496 L795 496 L795 514" />
+            <path className={`flowLink ${serverOnline ? serverClass : 'danger'}`} d="M607 477 L607 496 L795 496 L795 514" />
+            {/* Workstation ↔ Server LAN segment */}
+            <path className={`staticLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 556 L795 556" />
+            <path className={`flowLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 556 L795 556" />
           </svg>
         </div>
       </Panel>
@@ -678,9 +734,9 @@ function NetworkMapPage({ metrics }) {
         <div className="portRows">
           {[
             ['24', 'Gateway Router', 'ACTIVE', formatPortRate(metrics.switchPort24Rx, metrics.switchPort24Tx)],
-            ['1', 'HP ProDesk Server', serverOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort1Rx, metrics.switchPort1Tx)],
+            ['1', 'Proxmox Server', serverOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort1Rx, metrics.switchPort1Tx)],
             ['2', 'x25 Deco Mesh', 'ACTIVE', formatPortRate(metrics.switchPort2Rx, metrics.switchPort2Tx)],
-            ['3', 'Main Workstation', pcOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort3Rx, metrics.switchPort3Tx)],
+            ['3', 'Workstation', pcOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort3Rx, metrics.switchPort3Tx)],
             ['4-22', 'Available', 'IDLE', '-']
           ].map(([port, device, state, rate]) => (
             <div className="portRow" key={port}>
@@ -784,14 +840,16 @@ function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse
     e.target.value = '';
   }
 
-  async function handleFolderAdd() {
-    try {
-      const res = await fetch('/api/browse-folder');
-      const { path: folderPath } = await res.json();
-      if (!folderPath) return;
-      const name = folderPath.split(/[\\/]/).filter(Boolean).pop() || folderPath;
-      onAddFiles([{ name: name + '/', type: 'folder', path: folderPath }]);
-    } catch {}
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
+
+  function handleFolderAdd() {
+    setShowFolderPicker(true);
+  }
+
+  function handlePickerSelect(item) {
+    if (!item?.path) return;
+    const name = item.path.split(/[\\/]/).filter(Boolean).pop() || item.path;
+    onAddFiles([{ name: name + (item.type === 'folder' ? '/' : ''), type: item.type, path: item.path }]);
   }
 
   return (
@@ -821,6 +879,7 @@ function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse
             disabled={busy}
             onClick={() => setWorkflowMode(mode.id)}
             className={`workflowBtn${workflowMode === mode.id ? ` active ${mode.accent}` : ''}`}
+            data-tooltip={mode.tooltip}
           >
             {mode.label}
           </button>
@@ -858,6 +917,12 @@ function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse
           )}
         </div>
       </form>
+      {showFolderPicker && (
+        <FolderPickerModal
+          onSelect={handlePickerSelect}
+          onClose={() => setShowFolderPicker(false)}
+        />
+      )}
     </Panel>
   );
 }
@@ -970,18 +1035,6 @@ function OrchestratorPage({ modelStatus, chatSession }) {
         onAddFiles={chatSession.onAddFiles}
         onRemoveFile={chatSession.onRemoveFile}
       />
-
-      <Panel title="WORKER ROUTER" className="workerRouter">
-        <div className="workerGrid">
-          {orchestratorStatus.workers.map((worker) => (
-            <div className="workerCard" key={worker.id}>
-              <span>{workerLabel(worker.id)}</span>
-              <strong>{worker.role}</strong>
-              <em>{worker.cost} / {worker.state}</em>
-            </div>
-          ))}
-        </div>
-      </Panel>
 
       <Panel title="MEMORY CONTEXT" className="memoryPanel">
         <div className="memorySummary">
@@ -1097,6 +1150,123 @@ function OrchestratorPage({ modelStatus, chatSession }) {
   );
 }
 
+function FolderPickerModal({ onSelect, onClose }) {
+  const [currentPath, setCurrentPath] = useState('C:\\');
+  const [inputVal, setInputVal] = useState('C:\\');
+  const [dirs, setDirs] = useState([]);
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef(null);
+
+  async function loadPath(p) {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/list-dirs?path=${encodeURIComponent(p)}`);
+      const data = await res.json();
+      setCurrentPath(data.path);
+      setInputVal(data.path);
+      setDirs(data.dirs || []);
+      setFiles(data.files || []);
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => { loadPath('C:\\'); }, []);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  function handleInputKey(e) {
+    if (e.key === 'Enter') loadPath(inputVal);
+  }
+
+  function navigate(sub) {
+    const next = currentPath.replace(/[\\/]$/, '') + '\\' + sub;
+    loadPath(next);
+  }
+
+  function selectFile(name) {
+    const fullPath = currentPath.replace(/[\\/]$/, '') + '\\' + name;
+    onSelect({ path: fullPath, type: 'file' });
+    onClose();
+  }
+
+  function winJoin(parts) {
+    const joined = parts.join('\\');
+    // Bare drive letter like 'C:' must become 'C:\' so path.resolve gets the root
+    return /^[A-Za-z]:$/.test(joined) ? joined + '\\' : joined || 'C:\\';
+  }
+
+  function goUp() {
+    const parts = currentPath.replace(/[\\/]$/, '').split(/[\\/]/).filter(Boolean);
+    if (parts.length <= 1) return;
+    parts.pop();
+    loadPath(winJoin(parts));
+  }
+
+  const crumbs = currentPath.replace(/[\\/]$/, '').split(/[\\/]/).filter(Boolean);
+
+  return (
+    <div className="folderPickerOverlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="folderPickerModal">
+        <div className="folderPickerHeader">
+          <span className="folderPickerTitle">Select Folder</span>
+          <button className="folderPickerClose" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="folderPickerCrumbs">
+          {crumbs.map((seg, i) => (
+            <React.Fragment key={i}>
+              <button
+                className="folderPickerCrumb"
+                onClick={() => loadPath(winJoin(crumbs.slice(0, i + 1)))}
+              >{seg}</button>
+              {i < crumbs.length - 1 && <span className="folderPickerSep">›</span>}
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div className="folderPickerPathRow">
+          <input
+            ref={inputRef}
+            className="folderPickerInput"
+            value={inputVal}
+            onChange={e => setInputVal(e.target.value)}
+            onKeyDown={handleInputKey}
+            placeholder="Type a path and press Enter"
+            spellCheck={false}
+          />
+          <button className="folderPickerGoBtn" onClick={() => loadPath(inputVal)}>Go</button>
+        </div>
+
+        <div className="folderPickerList">
+          {crumbs.length > 1 && (
+            <button className="folderPickerEntry folderPickerUp" onClick={goUp}>↑ ..</button>
+          )}
+          {loading && <div className="folderPickerLoading">Loading…</div>}
+          {!loading && dirs.length === 0 && files.length === 0 && <div className="folderPickerEmpty">Empty directory</div>}
+          {!loading && dirs.map(name => (
+            <button key={`d:${name}`} className="folderPickerEntry folderPickerDir" onDoubleClick={() => navigate(name)} onClick={() => setInputVal(currentPath.replace(/[\\/]$/, '') + '\\' + name)}>
+              <span className="folderPickerIcon">📁</span> {name}
+            </button>
+          ))}
+          {!loading && files.map(name => (
+            <button key={`f:${name}`} className="folderPickerEntry folderPickerFile" onClick={() => selectFile(name)}>
+              <span className="folderPickerIcon">📄</span> {name}
+            </button>
+          ))}
+        </div>
+
+        <div className="folderPickerFooter">
+          <span className="folderPickerSelected">{inputVal}</span>
+          <div className="folderPickerActions">
+            <button className="folderPickerCancel" onClick={onClose}>Cancel</button>
+            <button className="folderPickerConfirm" onClick={() => { onSelect({ path: inputVal, type: 'folder' }); onClose(); }}>Add Path</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BuildChatPanel() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -1104,9 +1274,16 @@ function BuildChatPanel() {
   const [stagedId, setStagedId] = useState(null);
   const [stagedFiles, setStagedFiles] = useState([]);
   const [applyStatus, setApplyStatus] = useState('');
+  const [attachedFolders, setAttachedFolders] = useState([]);
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
   const abortRef = useRef(null);
   const historyRef = useRef([]);
   const bottomRef = useRef(null);
+
+  function handleItemSelected(item) {
+    if (!item?.path) return;
+    setAttachedFolders(prev => prev.find(f => f.path === item.path) ? prev : [...prev, item]);
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1120,6 +1297,7 @@ function BuildChatPanel() {
     setStagedId(null);
     setStagedFiles([]);
     setApplyStatus('');
+    setAttachedFolders([]);
 
     const userMsg = { role: 'user', content: text };
     const pendingMsg = { role: 'assistant', content: '', statuses: [], qc: '', actions: [] };
@@ -1136,7 +1314,7 @@ function BuildChatPanel() {
       const res = await fetch('/api/build-chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: text, history: historyRef.current.slice(0, -1) }),
+        body: JSON.stringify({ prompt: text, history: historyRef.current.slice(0, -1), attachments: attachedFolders }),
         signal: controller.signal
       });
 
@@ -1159,7 +1337,7 @@ function BuildChatPanel() {
             setMessages(prev => {
               const next = [...prev];
               const last = { ...next[next.length - 1] };
-              if (evt.type === 'status') {
+              if (evt.type === 'status' || evt.type === 'warning') {
                 last.statuses = [...(last.statuses || []), evt.text];
               } else if (evt.type === 'token') {
                 accum += evt.text;
@@ -1272,7 +1450,18 @@ function BuildChatPanel() {
           <div className="buildChatAppliedNote">{applyStatus}</div>
         )}
 
+        {attachedFolders.length > 0 && (
+          <div className="buildChatFolders">
+            {attachedFolders.map(f => (
+              <span key={f.path} className="buildChatFolderChip">
+                {f.type === 'file' ? '📄' : '📁'} {f.path.split(/[\\/]/).filter(Boolean).pop()}
+                <button type="button" className="buildChatFolderRemove" onClick={() => setAttachedFolders(prev => prev.filter(x => x.path !== f.path))}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
         <form className="buildChatInputRow" onSubmit={handleSubmit}>
+          <button type="button" className="buildChatFolderBtn" onClick={() => setShowFolderPicker(true)} disabled={busy} title="Attach a folder for Claude to focus on">📁</button>
           <input
             className="chatInput"
             value={input}
@@ -1287,6 +1476,12 @@ function BuildChatPanel() {
           }
         </form>
       </div>
+      {showFolderPicker && (
+        <FolderPickerModal
+          onSelect={handleItemSelected}
+          onClose={() => setShowFolderPicker(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1649,9 +1844,9 @@ function HomePage({ modelStatus }) {
 }
 
 const WORKFLOW_MODES = [
-  { id: 'ask',   label: 'ASK MAVERICK',  accent: 'cyan'  },
-  { id: 'build', label: 'BUILD / FIX',   accent: 'amber' },
-  { id: 'ops',   label: 'OPERATIONS',    accent: 'green' },
+  { id: 'ask',   label: 'ASK MAVERICK',  accent: 'cyan',  tooltip: 'Ask questions, request research, or check system status' },
+  { id: 'build', label: 'BUILD / FIX',   accent: 'amber', tooltip: 'Generate code, fix bugs, or build features with file context' },
+  { id: 'ops',   label: 'OPERATIONS',    accent: 'green', tooltip: 'Trigger pipelines, run agents, manage automation workflows' },
 ];
 
 const MAV_RAG_URL = 'http://192.168.1.12:8181/estimate';
@@ -1787,8 +1982,9 @@ function App() {
 
   return (
     <DashboardViewContext.Provider value={[view, setView]}>
-      <main className="dashboard" data-theme="ops-glass" data-theme-saved="Rugged-Ops Command">
-        <TopBar status={status} modelStatus={modelStatus} />
+      <div className="appShell">
+      <Sidebar status={status} modelStatus={modelStatus} />
+      <main className="dashboard">
         <div className="pageWrapper" key={view}>
         {view === 'home' ? (
           <HomePage modelStatus={modelStatus} />
@@ -1841,7 +2037,7 @@ function App() {
         )}
         </div>{/* /pageWrapper */}
 
-        {view !== 'orchestrator' && <div className="commandBar">
+        {view !== 'orchestrator' && <div className="commandBar" style={{marginLeft: 0}}>
           {chatPanelOpen && chatHistory.length > 0 && (
             <div className="chatHistory">
               {chatHistory.slice(-6).map((msg, i) => {
@@ -1871,6 +2067,7 @@ function App() {
                 disabled={chatBusy}
                 onClick={() => setWorkflowMode(mode.id)}
                 className={`workflowBtn${workflowMode === mode.id ? ` active ${mode.accent}` : ''}`}
+                data-tooltip={mode.tooltip}
               >
                 {mode.label}
               </button>
@@ -1938,6 +2135,7 @@ function App() {
           </form>
         </div>}
       </main>
+      </div>{/* /appShell */}
     </DashboardViewContext.Provider>
   );
 }

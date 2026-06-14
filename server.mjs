@@ -38,6 +38,7 @@ const ALLOWED_ROOTS = [
   path.normalize('C:\\Workspace'),
   path.normalize('C:\\llama-cpp-server'),
   path.normalize(memoryPath),
+  path.normalize(path.dirname(memoryPath)), // Parent of memory dir — e.g. C:\Users\carte\.claude\projects
   path.normalize(skillsPath),
   ...((process.env.MAV_EXTRA_ROOTS || '').split(';').filter(Boolean).map(p => path.normalize(p)))
 ];
@@ -1243,25 +1244,24 @@ async function applyStagedRun(req, res) {
   }
 }
 
-function handleBrowseFolder(res) {
-  return new Promise((resolve) => {
-    // Spawn a PowerShell FolderBrowserDialog on the server machine (same host as the browser)
-    const ps = spawn('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-Command',
-      `Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Select project folder'; $d.RootFolder = 'MyComputer'; if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath } else { Write-Output '' }`
-    ]);
-    let out = '';
-    ps.stdout.on('data', (d) => { out += d; });
-    ps.on('close', () => {
-      const selectedPath = out.trim();
-      sendJson(res, 200, { path: selectedPath || null });
-      resolve();
-    });
-    ps.on('error', (err) => {
-      sendJson(res, 500, { error: err.message });
-      resolve();
-    });
-  });
+function handleListDirs(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  const reqPath = url.searchParams.get('path') || 'C:\\';
+  // Normalize bare drive letters: 'C:' → 'C:\' so path.resolve returns the root, not process CWD
+  const normalized = /^[A-Za-z]:$/.test(reqPath.trim()) ? reqPath.trim() + '\\' : reqPath;
+  const abs = path.resolve(normalized);
+  let dirs = [], files = [];
+  try {
+    const all = fs.readdirSync(abs, { withFileTypes: true });
+    for (const e of all) {
+      if (e.name.startsWith('.')) continue;
+      if (e.isDirectory()) dirs.push(e.name);
+      else files.push(e.name);
+    }
+    dirs.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    files.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  } catch { /* unreadable — return empty */ }
+  sendJson(res, 200, { path: abs, dirs, files });
 }
 
 async function handleBuildOrchestration(res, controller, prompt, histMsgs, ctxBlock, attachBlock = '', folderPaths = []) {
@@ -1297,7 +1297,7 @@ async function handleBuildOrchestration(res, controller, prompt, histMsgs, ctxBl
 
   const skillsBlock = loadSkills();
   const userContent = [
-    `Workspace file tree:\n${treeBlock}`,
+    treeBlock ? `Workspace file tree:\n${treeBlock}` : '',
     skillsBlock ? `## Loaded Skills\n\n${skillsBlock}` : '',
     attachBlock,
     `Request: ${prompt}`
@@ -1647,7 +1647,7 @@ async function handleBuildChat(req, res) {
     return;
   }
 
-  const { prompt, history = [] } = body || {};
+  const { prompt, history = [], attachments = [] } = body || {};
   if (!String(prompt || '').trim()) {
     sendJson(res, 400, { error: 'Prompt is required.' });
     return;
@@ -1666,8 +1666,50 @@ async function handleBuildChat(req, res) {
 
   const staged = { id: `stage-${Date.now()}`, prompt: String(prompt).trim(), files: [], readPaths: new Set() };
 
-  // Seed Claude's conversation: workspace tree + history + user prompt
-  const tree = workspaceTree();
+  // Build file context only from paths the user explicitly attached — no auto-scan
+  const rawAttachments = (Array.isArray(attachments) ? attachments : [])
+    .filter(a => a?.type === 'folder' || a?.type === 'file');
+  const attachedPaths = [];
+  const blockedPaths = [];
+  for (const a of rawAttachments) {
+    const resolved = resolveSafePath(a.path);
+    if (resolved) attachedPaths.push({ type: a.type, path: resolved });
+    else blockedPaths.push(a.path);
+  }
+  if (blockedPaths.length) {
+    buildChatSseWrite(res, { type: 'warning', text: `⚠ ${blockedPaths.length} attachment(s) outside allowed roots were skipped: ${blockedPaths.join(', ')}. Add the parent folder to MAV_EXTRA_ROOTS in .env to allow it.` });
+  }
+
+  let treeContext = '';
+  const folderPaths = attachedPaths.filter(a => a.type === 'folder').map(a => a.path);
+  const filePaths = attachedPaths.filter(a => a.type === 'file').map(a => a.path);
+
+  if (folderPaths.length || filePaths.length) {
+    const lines = [];
+    const skip = new Set(['node_modules', '.git', 'dist', 'tmp', '.mav-console', '.venv', '__pycache__']);
+    const walk = (dir, prefix, depth) => {
+      if (depth > 3 || lines.length >= 150) return;
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (skip.has(e.name) || e.name.startsWith('.') || lines.length >= 150) continue;
+        lines.push(prefix + e.name + (e.isDirectory() ? '/' : ''));
+        if (e.isDirectory()) walk(path.join(dir, e.name), prefix + e.name + '/', depth + 1);
+      }
+    };
+    for (const fp of folderPaths) {
+      lines.push(`[FOLDER] ${fp}`);
+      walk(fp, '  ', 0);
+    }
+    if (filePaths.length) {
+      lines.push(`\n[FILES]`);
+      for (const fp of filePaths) {
+        lines.push(`  ${fp}`);
+      }
+    }
+    treeContext = `Attached context:\n${lines.join('\n')}\n\n`;
+  }
+
   const histMsgs = (Array.isArray(history) ? history : [])
     .slice(-8)
     .filter(m => (m.role === 'user' || m.role === 'assistant') && String(m.content || '').trim())
@@ -1675,7 +1717,7 @@ async function handleBuildChat(req, res) {
 
   const claudeMessages = [
     ...histMsgs,
-    { role: 'user', content: `Workspace file tree:\n${tree}\n\nRequest: ${String(prompt).trim()}` }
+    { role: 'user', content: `${treeContext}Request: ${String(prompt).trim()}` }
   ];
 
   buildChatSseWrite(res, { type: 'status', text: 'Claude is analyzing...' });
@@ -2001,8 +2043,8 @@ const server = http.createServer(async (req, res) => {
     await applyStagedRun(req, res);
     return;
   }
-  if (url.pathname === '/api/browse-folder' && req.method === 'GET') {
-    await handleBrowseFolder(res);
+  if (url.pathname === '/api/list-dirs' && req.method === 'GET') {
+    handleListDirs(req, res);
     return;
   }
   if (url.pathname === '/health') {
