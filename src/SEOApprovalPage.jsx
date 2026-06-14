@@ -150,7 +150,7 @@ export default function SEOApprovalPage() {
           {/* Summary bar */}
           <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
             {[
-              { label: 'Pending Approval', value: workflow.workflowStatus?.actions?.summary?.needs_approval ?? pendingActions.length, color: '#f59e0b' },
+              { label: 'Pending Approval', value: pendingActions.length, color: '#f59e0b' },
               { label: 'Reports Generated', value: workflow.activeWorkflow?.reportsGenerated ?? 0, color: '#10b981' },
               { label: 'Faults', value: (workflow.faults || []).length, color: '#ef4444' },
             ].map(s => (
