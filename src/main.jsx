@@ -145,53 +145,71 @@ function compactModelName(name) {
   return name.replace(/^qwen/i, 'Qwen').replace(/-/g, ' ');
 }
 
-function TopBar({ status, modelStatus }) {
+const NAV_ITEMS = [
+  { id: 'home', label: 'Home', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+  )},
+  { id: 'hardware', label: 'Hardware', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+  )},
+  { id: 'network', label: 'Network', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><circle cx="12" cy="5" r="3"/><circle cx="4" cy="19" r="3"/><circle cx="20" cy="19" r="3"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="13" x2="4" y2="16"/><line x1="12" y1="13" x2="20" y2="16"/></svg>
+  )},
+  { id: 'orchestrator', label: 'Orchestrator', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+  )},
+  { id: 'seo', label: 'SEO Pipeline', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+  ), badge: true },
+];
+
+function Sidebar({ status, modelStatus }) {
   const [view, setView] = useDashboardView();
   const deployStatus = useDeployStatus();
+  const deployOk = deployStatus.state === 'ok';
   const time = useMemo(() => {
     const now = status.updatedAt || new Date();
-    return new Intl.DateTimeFormat(undefined, {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    }).format(now);
+    return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(now);
   }, [status.updatedAt]);
-  const deployTime = useMemo(() => {
-    if (!deployStatus.deployedAt) return '--:--';
-    return new Intl.DateTimeFormat(undefined, {
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(new Date(deployStatus.deployedAt));
-  }, [deployStatus.deployedAt]);
-  const deployOk = deployStatus.state === 'ok';
+
   return (
-    <header className="topBar">
-      <div className="clockBlock">
-        <div>{time}</div>
-        <span>{status.state === 'online' ? 'PROMETHEUS ONLINE' : status.state.toUpperCase()}</span>
+    <aside className="sidebar">
+      <div className="sidebarLogo">
+        <span className="sidebarLogoMark">M</span>
+        <span className="sidebarLogoText">MCC</span>
       </div>
-      <div className="headerTab">
-        <div className="brandMark">
-          <img src="/assets/maverick-core-commander-logo.png" alt="Maverick Core Commander" />
+
+      <nav className="sidebarNav" aria-label="Dashboard view">
+        {NAV_ITEMS.map(item => (
+          <button
+            key={item.id}
+            className={`sidebarNavItem${view === item.id ? ' active' : ''}`}
+            onClick={() => setView(item.id)}
+          >
+            <span className="sidebarNavIcon">{item.icon}</span>
+            <span className="sidebarNavLabel">{item.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="sidebarFooter">
+        <div className="sidebarStatus">
+          <span className={`sidebarStatusDot ${status.state === 'online' ? 'online' : 'offline'}`} />
+          <span className="sidebarStatusText">{time} · Prometheus</span>
         </div>
-        <nav className="viewToggle" aria-label="Dashboard view">
-          <button className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}>Home</button>
-          <button className={view === 'hardware' ? 'active' : ''} onClick={() => setView('hardware')}>Hardware</button>
-          <button className={view === 'network' ? 'active' : ''} onClick={() => setView('network')}>Network Map</button>
-          <button className={view === 'orchestrator' ? 'active' : ''} onClick={() => setView('orchestrator')}>Orchestrator</button>
-          <button className={view === 'seo' ? 'active' : ''} onClick={() => setView('seo')}>SEO Pipeline</button>
-        </nav>
+        <div className={`sidebarModel ${modelStatus.state}`}>
+          <span className={`sidebarStatusDot ${modelStatus.state === 'online' ? 'online' : 'offline'}`} />
+          <div>
+            <div className="sidebarModelName">{compactModelName(modelStatus.model)}</div>
+            <div className="sidebarModelSub">{modelStatus.state === 'online' ? 'Online' : 'Offline'} · Local</div>
+          </div>
+        </div>
+        <div className={`sidebarDeploy ${deployOk ? 'online' : 'offline'}`}>
+          <span className={`sidebarStatusDot ${deployOk ? 'online' : 'offline'}`} />
+          <span className="sidebarDeployText">Deploy {deployOk ? 'OK' : '…'}</span>
+        </div>
       </div>
-      <div className={`deployStatus ${deployOk ? 'online' : 'offline'}`}>
-        <strong>{deployOk ? 'DEPLOY OK' : 'DEPLOY ...'}</strong>
-        <span>{deployTime}</span>
-      </div>
-      <div className={`agentStatus ${modelStatus.state === 'online' ? 'online' : 'offline'}`}>
-        LOCAL MODEL: <strong>{compactModelName(modelStatus.model)}</strong>
-        <em>|</em>
-        <span>{modelStatus.state.toUpperCase()}</span>
-      </div>
-    </header>
+    </aside>
   );
 }
 
@@ -784,14 +802,16 @@ function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse
     e.target.value = '';
   }
 
-  async function handleFolderAdd() {
-    try {
-      const res = await fetch('/api/browse-folder');
-      const { path: folderPath } = await res.json();
-      if (!folderPath) return;
-      const name = folderPath.split(/[\\/]/).filter(Boolean).pop() || folderPath;
-      onAddFiles([{ name: name + '/', type: 'folder', path: folderPath }]);
-    } catch {}
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
+
+  function handleFolderAdd() {
+    setShowFolderPicker(true);
+  }
+
+  function handlePickerSelect(item) {
+    if (!item?.path) return;
+    const name = item.path.split(/[\\/]/).filter(Boolean).pop() || item.path;
+    onAddFiles([{ name: name + (item.type === 'folder' ? '/' : ''), type: item.type, path: item.path }]);
   }
 
   return (
@@ -858,6 +878,12 @@ function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse
           )}
         </div>
       </form>
+      {showFolderPicker && (
+        <FolderPickerModal
+          onSelect={handlePickerSelect}
+          onClose={() => setShowFolderPicker(false)}
+        />
+      )}
     </Panel>
   );
 }
@@ -1097,6 +1123,123 @@ function OrchestratorPage({ modelStatus, chatSession }) {
   );
 }
 
+function FolderPickerModal({ onSelect, onClose }) {
+  const [currentPath, setCurrentPath] = useState('C:\\');
+  const [inputVal, setInputVal] = useState('C:\\');
+  const [dirs, setDirs] = useState([]);
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef(null);
+
+  async function loadPath(p) {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/list-dirs?path=${encodeURIComponent(p)}`);
+      const data = await res.json();
+      setCurrentPath(data.path);
+      setInputVal(data.path);
+      setDirs(data.dirs || []);
+      setFiles(data.files || []);
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => { loadPath('C:\\'); }, []);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  function handleInputKey(e) {
+    if (e.key === 'Enter') loadPath(inputVal);
+  }
+
+  function navigate(sub) {
+    const next = currentPath.replace(/[\\/]$/, '') + '\\' + sub;
+    loadPath(next);
+  }
+
+  function selectFile(name) {
+    const fullPath = currentPath.replace(/[\\/]$/, '') + '\\' + name;
+    onSelect({ path: fullPath, type: 'file' });
+    onClose();
+  }
+
+  function winJoin(parts) {
+    const joined = parts.join('\\');
+    // Bare drive letter like 'C:' must become 'C:\' so path.resolve gets the root
+    return /^[A-Za-z]:$/.test(joined) ? joined + '\\' : joined || 'C:\\';
+  }
+
+  function goUp() {
+    const parts = currentPath.replace(/[\\/]$/, '').split(/[\\/]/).filter(Boolean);
+    if (parts.length <= 1) return;
+    parts.pop();
+    loadPath(winJoin(parts));
+  }
+
+  const crumbs = currentPath.replace(/[\\/]$/, '').split(/[\\/]/).filter(Boolean);
+
+  return (
+    <div className="folderPickerOverlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="folderPickerModal">
+        <div className="folderPickerHeader">
+          <span className="folderPickerTitle">Select Folder</span>
+          <button className="folderPickerClose" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="folderPickerCrumbs">
+          {crumbs.map((seg, i) => (
+            <React.Fragment key={i}>
+              <button
+                className="folderPickerCrumb"
+                onClick={() => loadPath(winJoin(crumbs.slice(0, i + 1)))}
+              >{seg}</button>
+              {i < crumbs.length - 1 && <span className="folderPickerSep">›</span>}
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div className="folderPickerPathRow">
+          <input
+            ref={inputRef}
+            className="folderPickerInput"
+            value={inputVal}
+            onChange={e => setInputVal(e.target.value)}
+            onKeyDown={handleInputKey}
+            placeholder="Type a path and press Enter"
+            spellCheck={false}
+          />
+          <button className="folderPickerGoBtn" onClick={() => loadPath(inputVal)}>Go</button>
+        </div>
+
+        <div className="folderPickerList">
+          {crumbs.length > 1 && (
+            <button className="folderPickerEntry folderPickerUp" onClick={goUp}>↑ ..</button>
+          )}
+          {loading && <div className="folderPickerLoading">Loading…</div>}
+          {!loading && dirs.length === 0 && files.length === 0 && <div className="folderPickerEmpty">Empty directory</div>}
+          {!loading && dirs.map(name => (
+            <button key={`d:${name}`} className="folderPickerEntry folderPickerDir" onDoubleClick={() => navigate(name)} onClick={() => setInputVal(currentPath.replace(/[\\/]$/, '') + '\\' + name)}>
+              <span className="folderPickerIcon">📁</span> {name}
+            </button>
+          ))}
+          {!loading && files.map(name => (
+            <button key={`f:${name}`} className="folderPickerEntry folderPickerFile" onClick={() => selectFile(name)}>
+              <span className="folderPickerIcon">📄</span> {name}
+            </button>
+          ))}
+        </div>
+
+        <div className="folderPickerFooter">
+          <span className="folderPickerSelected">{inputVal}</span>
+          <div className="folderPickerActions">
+            <button className="folderPickerCancel" onClick={onClose}>Cancel</button>
+            <button className="folderPickerConfirm" onClick={() => { onSelect({ path: inputVal, type: 'folder' }); onClose(); }}>Add Path</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BuildChatPanel() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -1104,9 +1247,16 @@ function BuildChatPanel() {
   const [stagedId, setStagedId] = useState(null);
   const [stagedFiles, setStagedFiles] = useState([]);
   const [applyStatus, setApplyStatus] = useState('');
+  const [attachedFolders, setAttachedFolders] = useState([]);
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
   const abortRef = useRef(null);
   const historyRef = useRef([]);
   const bottomRef = useRef(null);
+
+  function handleItemSelected(item) {
+    if (!item?.path) return;
+    setAttachedFolders(prev => prev.find(f => f.path === item.path) ? prev : [...prev, item]);
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1120,6 +1270,7 @@ function BuildChatPanel() {
     setStagedId(null);
     setStagedFiles([]);
     setApplyStatus('');
+    setAttachedFolders([]);
 
     const userMsg = { role: 'user', content: text };
     const pendingMsg = { role: 'assistant', content: '', statuses: [], qc: '', actions: [] };
@@ -1136,7 +1287,7 @@ function BuildChatPanel() {
       const res = await fetch('/api/build-chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: text, history: historyRef.current.slice(0, -1) }),
+        body: JSON.stringify({ prompt: text, history: historyRef.current.slice(0, -1), attachments: attachedFolders }),
         signal: controller.signal
       });
 
@@ -1159,7 +1310,7 @@ function BuildChatPanel() {
             setMessages(prev => {
               const next = [...prev];
               const last = { ...next[next.length - 1] };
-              if (evt.type === 'status') {
+              if (evt.type === 'status' || evt.type === 'warning') {
                 last.statuses = [...(last.statuses || []), evt.text];
               } else if (evt.type === 'token') {
                 accum += evt.text;
@@ -1272,7 +1423,18 @@ function BuildChatPanel() {
           <div className="buildChatAppliedNote">{applyStatus}</div>
         )}
 
+        {attachedFolders.length > 0 && (
+          <div className="buildChatFolders">
+            {attachedFolders.map(f => (
+              <span key={f.path} className="buildChatFolderChip">
+                {f.type === 'file' ? '📄' : '📁'} {f.path.split(/[\\/]/).filter(Boolean).pop()}
+                <button type="button" className="buildChatFolderRemove" onClick={() => setAttachedFolders(prev => prev.filter(x => x.path !== f.path))}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
         <form className="buildChatInputRow" onSubmit={handleSubmit}>
+          <button type="button" className="buildChatFolderBtn" onClick={() => setShowFolderPicker(true)} disabled={busy} title="Attach a folder for Claude to focus on">📁</button>
           <input
             className="chatInput"
             value={input}
@@ -1287,6 +1449,12 @@ function BuildChatPanel() {
           }
         </form>
       </div>
+      {showFolderPicker && (
+        <FolderPickerModal
+          onSelect={handleItemSelected}
+          onClose={() => setShowFolderPicker(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1787,8 +1955,9 @@ function App() {
 
   return (
     <DashboardViewContext.Provider value={[view, setView]}>
-      <main className="dashboard" data-theme="ops-glass" data-theme-saved="Rugged-Ops Command">
-        <TopBar status={status} modelStatus={modelStatus} />
+      <div className="appShell">
+      <Sidebar status={status} modelStatus={modelStatus} />
+      <main className="dashboard">
         <div className="pageWrapper" key={view}>
         {view === 'home' ? (
           <HomePage modelStatus={modelStatus} />
@@ -1841,7 +2010,7 @@ function App() {
         )}
         </div>{/* /pageWrapper */}
 
-        {view !== 'orchestrator' && <div className="commandBar">
+        {view !== 'orchestrator' && <div className="commandBar" style={{marginLeft: 0}}>
           {chatPanelOpen && chatHistory.length > 0 && (
             <div className="chatHistory">
               {chatHistory.slice(-6).map((msg, i) => {
@@ -1938,6 +2107,7 @@ function App() {
           </form>
         </div>}
       </main>
+      </div>{/* /appShell */}
     </DashboardViewContext.Provider>
   );
 }
