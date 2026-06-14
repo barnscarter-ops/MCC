@@ -636,18 +636,18 @@ function NetworkMapPage({ metrics }) {
         <div className="topologyCanvas">
           {/* Tier zone labels */}
           <div className="tierChip" style={{top: 12, left: 14}}>WAN / INTERNET</div>
-          <div className="tierChip" style={{top: 378, left: 14}}>SWITCH CORE</div>
-          <div className="tierChip" style={{top: 528, left: 14}}>ENDPOINTS</div>
+          <div className="tierChip" style={{top: 282, left: 14}}>SWITCH CORE</div>
+          <div className="tierChip" style={{top: 428, left: 14}}>ENDPOINTS</div>
           {/* Horizontal tier dividers */}
-          <div className="tierDivider" style={{top: 374}} />
-          <div className="tierDivider" style={{top: 524}} />
+          <div className="tierDivider" style={{top: 278}} />
+          <div className="tierDivider" style={{top: 424}} />
           {/* Link speed labels */}
-          <div className="linkLabel" style={{top: 115, left: 'calc(50% + 120px)'}}>AT&T FIBER</div>
-          <div className="linkLabel" style={{top: 244, left: 'calc(50% + 120px)'}}>WAN UPLINK</div>
-          <div className="linkLabel" style={{top: 372, left: 'calc(50% + 120px)'}}>GW → CORE</div>
-          <div className="linkLabel" style={{top: 524, left: '28%'}}>P3 · 2.5 Gb</div>
-          <div className="linkLabel" style={{top: 524, left: 'calc(50% + 120px)'}}>P2 · 1 Gb</div>
-          <div className="linkLabel" style={{top: 524, right: '14%'}}>P1 · 2.5 Gb</div>
+          <div className="linkLabel" style={{top: 88, left: 'calc(50% + 120px)'}}>AT&T FIBER</div>
+          <div className="linkLabel" style={{top: 172, left: 'calc(50% + 120px)'}}>WAN UPLINK</div>
+          <div className="linkLabel" style={{top: 258, left: 'calc(50% + 120px)'}}>GW → CORE</div>
+          <div className="linkLabel" style={{top: 412, left: '28%'}}>P3 · 2.5 Gb</div>
+          <div className="linkLabel" style={{top: 412, left: 'calc(50% + 120px)'}}>P2 · 1 Gb</div>
+          <div className="linkLabel" style={{top: 412, right: '14%'}}>P1 · 2.5 Gb</div>
 
           <div className="mapNode isp">
             <span className="nodeTypeBadge">PROVIDER</span>
@@ -707,26 +707,26 @@ function NetworkMapPage({ metrics }) {
 
           <svg className="mapLines" viewBox="0 0 1000 640" preserveAspectRatio="none" aria-hidden="true">
             {/* ISP → Internet */}
-            <path className={`staticLink ${gatewayClass}`} d="M500 84 L500 117" />
-            <path className={`flowLink ${gatewayClass}`} d="M500 84 L500 117" />
+            <path className={`staticLink ${gatewayClass}`} d="M500 72 L500 90" />
+            <path className={`flowLink ${gatewayClass}`} d="M500 72 L500 90" />
             {/* Internet → Router */}
-            <path className={`staticLink ${gatewayClass}`} d="M500 189 L500 222" />
-            <path className={`flowLink ${gatewayClass}`} d="M500 189 L500 222" />
+            <path className={`staticLink ${gatewayClass}`} d="M500 141 L500 161" />
+            <path className={`flowLink ${gatewayClass}`} d="M500 141 L500 161" />
             {/* Router → Switch */}
-            <path className={`staticLink ${gatewayClass}`} d="M500 296 L500 329" />
-            <path className={`flowLink ${gatewayClass}`} d="M500 296 L500 329" />
+            <path className={`staticLink ${gatewayClass}`} d="M500 217 L500 240" />
+            <path className={`flowLink ${gatewayClass}`} d="M500 217 L500 240" />
             {/* Switch → Workstation */}
-            <path className={`staticLink ${pcOnline ? pcClass : 'danger'}`} d="M393 429 L393 441 L205 441 L205 461" />
-            <path className={`flowLink ${pcOnline ? pcClass : 'danger'}`} d="M393 429 L393 441 L205 441 L205 461" />
+            <path className={`staticLink ${pcOnline ? pcClass : 'danger'}`} d="M393 336 L393 350 L205 350 L205 361" />
+            <path className={`flowLink ${pcOnline ? pcClass : 'danger'}`} d="M393 336 L393 350 L205 350 L205 361" />
             {/* Switch → Mesh */}
-            <path className={`staticLink ${meshClass}`} d="M500 429 L500 539" />
-            <path className={`flowLink ${meshClass}`} d="M500 429 L500 539" />
+            <path className={`staticLink ${meshClass}`} d="M500 336 L500 361" />
+            <path className={`flowLink ${meshClass}`} d="M500 336 L500 361" />
             {/* Switch → Server */}
-            <path className={`staticLink ${serverOnline ? serverClass : 'danger'}`} d="M607 429 L607 441 L795 441 L795 461" />
-            <path className={`flowLink ${serverOnline ? serverClass : 'danger'}`} d="M607 429 L607 441 L795 441 L795 461" />
-            {/* Workstation ↔ Server LAN segment — U-route below Deco Mesh */}
-            <path className={`staticLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 494 L205 616 L795 616 L795 494" />
-            <path className={`flowLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 494 L205 616 L795 616 L795 494" />
+            <path className={`staticLink ${serverOnline ? serverClass : 'danger'}`} d="M607 336 L607 350 L795 350 L795 361" />
+            <path className={`flowLink ${serverOnline ? serverClass : 'danger'}`} d="M607 336 L607 350 L795 350 L795 361" />
+            {/* Workstation ↔ Server LAN segment — U-route below endpoints */}
+            <path className={`staticLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 427 L205 448 L795 448 L795 427" />
+            <path className={`flowLink ${serverOnline && pcOnline ? 'good' : 'danger'}`} d="M205 427 L205 448 L795 448 L795 427" />
           </svg>
         </div>
       </Panel>
@@ -1047,7 +1047,7 @@ function OrchestratorPage({ modelStatus, chatSession }) {
           ))}
         </div>
         <div className="memoryMatches">
-          {(memoryContext.results || memoryContext.memories || []).slice(0, 4).map((memory) => (
+          {(memoryContext.results || memoryContext.memories || []).slice(0, 5).map((memory) => (
             <div className="memoryMatch" key={memory.id}>
               <strong>{memory.id}</strong>
               <span>{memory.type}</span>
@@ -1493,6 +1493,8 @@ function HomePage({ modelStatus }) {
   const [actionBusyId, setActionBusyId] = useState('');
   const [actionResult, setActionResult] = useState(null);
   const [listModal, setListModal] = useState(null);
+  const [expandedSections, setExpandedSections] = useState(new Set());
+  const [hoveredSection, setHoveredSection] = useState(null);
   const taskRuns = orchestratorStatus.taskRuns || [];
   const workers = orchestratorStatus.workers || [];
   const onlineWorkers = workers.filter((worker) => /online|available|manual/i.test(worker.state || '')).length;
@@ -1619,6 +1621,14 @@ function HomePage({ modelStatus }) {
     );
   }
 
+  function toggleSection(key) {
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
   const modalConfig = listModal === 'actions'
     ? { title: 'Upcoming Actions', count: upcomingActions.length, rows: upcomingActions.map(renderActionRow), empty: 'No upcoming actions detected.' }
     : listModal === 'reports'
@@ -1710,7 +1720,9 @@ function HomePage({ modelStatus }) {
           <div>
             <span>AGENT FLEET</span>
             <strong>{onlineWorkers} / {workers.length}</strong>
-            <em>{modelStatus.state === 'online' ? 'LOCAL AI READY' : 'LOCAL AI OFFLINE'}</em>
+            <em className={onlineWorkers === workers.length && workers.length > 0 ? 'fleetOk' : 'fleetWarn'}>
+              ● {onlineWorkers === workers.length && workers.length > 0 ? 'ALL ONLINE' : `${workers.length - onlineWorkers} OFFLINE`}
+            </em>
           </div>
           <div>
             <span>7-DAY REPORTS</span>
@@ -1746,11 +1758,6 @@ function HomePage({ modelStatus }) {
           <span>Needs approval: {actionSummary.needs_approval || 0}</span>
           <span>Access blocked: {actionSummary.blocked_access || 0}</span>
         </div>
-        <div className={`workflowFaultStrip ${faults.length ? 'hasFaults' : ''}`}>
-          <span>{faults.length ? 'Faults / Blockers' : 'Faults'}</span>
-          <strong>{faults.length ? faults.length : 'Clear'}</strong>
-          <em>{faults[0] || 'No current workflow faults.'}</em>
-        </div>
         {runHealth && (
           <div className="runHealthStrip">
             <span className="runHealthLabel">LAST RUNS</span>
@@ -1772,54 +1779,120 @@ function HomePage({ modelStatus }) {
         )}
       </Panel>
 
-      <Panel title="AGENT FLEET" className="agentFleetPanel">
-        <div className="agentFleetList">
-          {workers.map((worker) => (
-            <div className="agentFleetRow" key={worker.id}>
-              <span className={/online|available|manual/i.test(worker.state || '') ? 'ok' : 'warn'} />
-              <strong>{workerLabel(worker.id)}</strong>
-              <em>{worker.state}</em>
+      <Panel title="ACTIVITY" className="activityPanel">
+        {/* Upcoming Actions */}
+        <div className="activitySection">
+          <div
+            className="activitySectionHead"
+            role="button"
+            tabIndex={0}
+            onClick={() => toggleSection('actions')}
+            onKeyDown={(e) => e.key === 'Enter' && toggleSection('actions')}
+            onMouseEnter={() => setHoveredSection('actions')}
+            onMouseLeave={() => setHoveredSection(null)}
+          >
+            <strong>UPCOMING ACTIONS</strong>
+            <span className="activityCount">{upcomingActions.length}</span>
+            <span className="activityChevron">{expandedSections.has('actions') ? '▲' : '▼'}</span>
+            {hoveredSection === 'actions' && !expandedSections.has('actions') && upcomingActions.length > 0 && (
+              <div className="activityPreview">
+                {upcomingActions.slice(0, 2).map((a) => (
+                  <div key={a.id}>{a.title} — {a.status}</div>
+                ))}
+                {upcomingActions.length > 2 && <div>+{upcomingActions.length - 2} more</div>}
+              </div>
+            )}
+          </div>
+          {expandedSections.has('actions') && (
+            <div className="activitySectionBody">
+              <div className="panelListToolbar">
+                <span>{upcomingActions.length} total</span>
+                <button type="button" disabled={upcomingActions.length <= 5} onClick={() => setListModal('actions')}>View all</button>
+              </div>
+              <div className="actionList compactList">
+                {visibleActions.map(renderActionRow)}
+                {!upcomingActions.length ? <div className="emptyPlan">No upcoming actions detected.</div> : null}
+                {actionResult ? (
+                  <div className={actionResult.kind === 'error' ? 'actionResult error' : 'actionResult'}>
+                    {actionResult.kind === 'error' ? actionResult.error : `${actionResult.kind}: ${actionResult.result.status || actionResult.result.state || 'complete'}`}
+                  </div>
+                ) : null}
+              </div>
             </div>
-          ))}
+          )}
         </div>
-      </Panel>
 
-      <Panel title="UPCOMING ACTIONS" className="actionsPanel">
-        <div className="panelListToolbar">
-          <span>{upcomingActions.length} total</span>
-          <button type="button" disabled={upcomingActions.length <= 5} onClick={() => setListModal('actions')}>View all</button>
-        </div>
-        <div className="actionList compactList">
-          {visibleActions.map(renderActionRow)}
-          {!upcomingActions.length ? <div className="emptyPlan">No upcoming actions detected.</div> : null}
-          {actionResult ? (
-            <div className={actionResult.kind === 'error' ? 'actionResult error' : 'actionResult'}>
-              {actionResult.kind === 'error'
-                ? actionResult.error
-                : `${actionResult.kind}: ${actionResult.result.status || actionResult.result.state || 'complete'}`}
+        {/* Recent Reports */}
+        <div className="activitySection">
+          <div
+            className="activitySectionHead"
+            role="button"
+            tabIndex={0}
+            onClick={() => toggleSection('reports')}
+            onKeyDown={(e) => e.key === 'Enter' && toggleSection('reports')}
+            onMouseEnter={() => setHoveredSection('reports')}
+            onMouseLeave={() => setHoveredSection(null)}
+          >
+            <strong>RECENT REPORTS</strong>
+            <span className="activityCount">{recentReports.length}</span>
+            <span className="activityChevron">{expandedSections.has('reports') ? '▲' : '▼'}</span>
+            {hoveredSection === 'reports' && !expandedSections.has('reports') && recentReports.length > 0 && (
+              <div className="activityPreview">
+                {recentReports.slice(0, 2).map((r) => (
+                  <div key={r.name}>{(r.name || '').replace(/_/g, ' ')} — {new Date(r.updatedAt).toLocaleDateString()}</div>
+                ))}
+                {recentReports.length > 2 && <div>+{recentReports.length - 2} more</div>}
+              </div>
+            )}
+          </div>
+          {expandedSections.has('reports') && (
+            <div className="activitySectionBody">
+              <div className="panelListToolbar">
+                <span>{recentReports.length} total</span>
+                <button type="button" disabled={recentReports.length <= 5} onClick={() => setListModal('reports')}>View all</button>
+              </div>
+              <div className="reportList compactList">
+                {visibleReports.map(renderReportRow)}
+              </div>
             </div>
-          ) : null}
+          )}
         </div>
-      </Panel>
 
-      <Panel title="RECENT REPORTS" className="reportsPanel">
-        <div className="panelListToolbar">
-          <span>{recentReports.length} total</span>
-          <button type="button" disabled={recentReports.length <= 5} onClick={() => setListModal('reports')}>View all</button>
-        </div>
-        <div className="reportList compactList">
-          {visibleReports.map(renderReportRow)}
-        </div>
-      </Panel>
-
-      <Panel title="RECENT TASK RUNS" className="recentTaskPanel">
-        <div className="panelListToolbar">
-          <span>{taskRuns.length} total</span>
-          <button type="button" disabled={taskRuns.length <= 5} onClick={() => setListModal('tasks')}>View all</button>
-        </div>
-        <div className="recentTaskList compactList">
-          {visibleTaskRuns.map(renderTaskRunRow)}
-          {!taskRuns.length ? <div className="emptyPlan">No task runs logged yet.</div> : null}
+        {/* Recent Task Runs */}
+        <div className="activitySection">
+          <div
+            className="activitySectionHead"
+            role="button"
+            tabIndex={0}
+            onClick={() => toggleSection('tasks')}
+            onKeyDown={(e) => e.key === 'Enter' && toggleSection('tasks')}
+            onMouseEnter={() => setHoveredSection('tasks')}
+            onMouseLeave={() => setHoveredSection(null)}
+          >
+            <strong>RECENT TASK RUNS</strong>
+            <span className="activityCount">{taskRuns.length}</span>
+            <span className="activityChevron">{expandedSections.has('tasks') ? '▲' : '▼'}</span>
+            {hoveredSection === 'tasks' && !expandedSections.has('tasks') && taskRuns.length > 0 && (
+              <div className="activityPreview">
+                {taskRuns.slice(0, 2).map((t) => (
+                  <div key={t.id}>{t.taskTitle} — {t.status}</div>
+                ))}
+                {taskRuns.length > 2 && <div>+{taskRuns.length - 2} more</div>}
+              </div>
+            )}
+          </div>
+          {expandedSections.has('tasks') && (
+            <div className="activitySectionBody">
+              <div className="panelListToolbar">
+                <span>{taskRuns.length} total</span>
+                <button type="button" disabled={taskRuns.length <= 5} onClick={() => setListModal('tasks')}>View all</button>
+              </div>
+              <div className="recentTaskList compactList">
+                {visibleTaskRuns.map(renderTaskRunRow)}
+                {!taskRuns.length ? <div className="emptyPlan">No task runs logged yet.</div> : null}
+              </div>
+            </div>
+          )}
         </div>
       </Panel>
 

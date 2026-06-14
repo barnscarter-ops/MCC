@@ -315,19 +315,9 @@ body {
   min-height: 300px;
 }
 
-.agentFleetPanel {
+.activityPanel {
   grid-column: span 6;
-  min-height: 300px;
-}
-
-.reportsPanel {
-  grid-column: span 4;
-  min-height: 292px;
-}
-
-.actionsPanel {
-  grid-column: span 4;
-  min-height: 292px;
+  min-height: 120px;
 }
 
 .faultPanel {
@@ -336,8 +326,7 @@ body {
 }
 
 .recentTaskPanel {
-  grid-column: span 4;
-  min-height: 292px;
+  display: none;
 }
 
 .workflowCard,
@@ -1375,8 +1364,8 @@ body {
 
 .hardwareGrid {
   grid-template-areas:
-    "workstation workstation workstation workstation workstation workstation model model model model model model"
-    "network network network network network network server server server server server server"
+    "workstation workstation workstation workstation workstation workstation server server server server server server"
+    "network network network network network network model model model model model model"
     "network network network network network network storage storage storage storage storage storage"
     "services services services services services services services services services services services services";
 }
@@ -2641,7 +2630,7 @@ body {
 
 .portRow {
   display: grid;
-  grid-template-columns: 54px minmax(82px, 1fr) 50px 104px;
+  grid-template-columns: 54px minmax(82px, 1fr) 70px 104px;
   gap: 8px;
   align-items: center;
   padding: 9px;
@@ -5566,17 +5555,17 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   padding: 12px !important;
 }
 
-/* Repositioned nodes — Deco on own row below Workstation/Server */
+/* Repositioned nodes — even spacing, no overlaps, mesh on same row as endpoints */
 .topologyCanvas { height: 780px !important; }
 .mapPanel       { min-height: 820px !important; }
 .portPanel      { min-height: 820px !important; }
 .isp            { top: 12px !important; }
-.internet       { top: 148px !important; min-height: 62px !important; }
-.router         { top: 280px !important; min-height: 68px !important; }
-.switch         { top: 400px !important; min-height: 110px !important; }
-.workstationNode{ top: 555px !important; left: 60px !important; }
-.serverNode     { top: 555px !important; right: 60px !important; }
-.meshNode       { top: 650px !important; bottom: auto !important; left: calc(50% - 105px) !important; }
+.internet       { top: 110px !important; min-height: 62px !important; }
+.router         { top: 196px !important; min-height: 68px !important; }
+.switch         { top: 292px !important; min-height: 110px !important; }
+.workstationNode{ top: 440px !important; left: 60px !important; }
+.serverNode     { top: 440px !important; right: 60px !important; }
+.meshNode       { top: 440px !important; bottom: auto !important; left: calc(50% - 105px) !important; }
 
 /* Topology node styling — more refined */
 .topoDevice {
@@ -5789,6 +5778,90 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   white-space: nowrap !important;
   font-size: 12px !important;
 }
+
+/* ═══ ACTIVITY PANEL ══════════════════════════════════════════════════════════ */
+.activitySection {
+  margin-bottom: 4px;
+}
+
+.activitySectionHead {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,.04);
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.activitySectionHead:hover {
+  background: rgba(255,255,255,.07);
+}
+
+.activitySectionHead strong {
+  flex: 1;
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--muted);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.activityCount {
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--cyan);
+  min-width: 20px;
+  text-align: right;
+}
+
+.activityChevron {
+  font-size: 10px;
+  color: var(--muted);
+  opacity: .6;
+}
+
+.activityPreview {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 8px 10px;
+  background: #1a1d26;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.5);
+  pointer-events: none;
+}
+
+.activityPreview div {
+  padding: 4px 0;
+  font-family: "Barlow Condensed", Inter, sans-serif;
+  font-size: 12px;
+  color: #8a93a8;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activityPreview div:last-child {
+  border-bottom: none;
+}
+
+.activitySectionBody {
+  margin-top: 3px;
+}
+
+/* Fleet status indicator in ops command box */
+.fleetOk  { color: var(--green) !important; }
+.fleetWarn { color: var(--red) !important; }
 
 /* ═══ WORKFLOW BUTTON TOOLTIPS ════════════════════════════════════════════════ */
 .workflowBtn[data-tooltip] {

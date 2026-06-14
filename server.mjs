@@ -168,7 +168,7 @@ function loadMemoryIndex() {
 
   const warnings = [];
   const files = fs.readdirSync(memoryPath)
-    .filter((file) => file.toLowerCase().endsWith('.md'))
+    .filter((file) => file.toLowerCase().endsWith('.md') && file.toLowerCase() !== 'memory.md')
     .sort();
   const memories = files.flatMap((file) => {
     const sourcePath = path.join(memoryPath, file);
