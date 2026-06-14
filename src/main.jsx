@@ -524,6 +524,17 @@ function HardwareNetworkMap({ metrics }) {
 
 function Server({ metrics }) {
   const serverOnline = Number(metrics.serverUp) === 1;
+  const pcOnline = metrics.pcUp === 1;
+  const root = clampPercent(metrics.rootDisk);
+  const localLvmUsed = diskUsedPercent(metrics.pveLocalLvmFreeBytes, metrics.pveLocalLvmTotalBytes, null);
+  const samsungSataUsed = diskUsedPercent(metrics.samsungSataFreeBytes, metrics.samsungSataTotalBytes, null);
+  const services = [
+    ['PROMETHEUS', 'ONLINE'],
+    ['MAV-CONSOLE', 'ONLINE'],
+    ['MAIN PC', pcOnline ? 'ONLINE' : 'DOWN'],
+    ['PROXMOX', serverOnline ? 'ONLINE' : 'DOWN'],
+    ['LOCAL MODEL', 'TRACKED']
+  ];
   return (
     <Panel title="HP ProDesk RAG SERVER (PROXMOX)" className="server">
       <div className="serverGrid">
@@ -539,25 +550,9 @@ function Server({ metrics }) {
         <span>PROXMOX EXPORTER STATUS:</span>
         <strong>{serverOnline ? 'ONLINE' : 'OFFLINE'}</strong>
       </div>
-      <div className="panelFooter">
-        <span className={serverOnline ? 'ok' : 'bad'}>{serverOnline ? 'NODE_EXPORTER ONLINE' : 'NODE_EXPORTER DOWN'}</span>
-        <span>PORT 1 / 2.5Gb</span>
-      </div>
-    </Panel>
-  );
-}
-
-function Storage({ metrics }) {
-  const root = clampPercent(metrics.rootDisk);
-  const localLvmUsed = diskUsedPercent(metrics.pveLocalLvmFreeBytes, metrics.pveLocalLvmTotalBytes, null);
-  const samsungSataUsed = diskUsedPercent(metrics.samsungSataFreeBytes, metrics.samsungSataTotalBytes, null);
-  return (
-    <Panel title="STORAGE AND HEALTH" className="storage">
       <div className="healthBar">
         <span>STORAGE SYSTEM HEALTH</span>
-        <div>
-          <i style={{ width: '98%' }} />
-        </div>
+        <div><i style={{ width: '98%' }} /></div>
         <strong>98% GOOD</strong>
       </div>
       <div className="storageGrid">
@@ -589,22 +584,6 @@ function Storage({ metrics }) {
           note="Mounted NTFS / SMART passed"
         />
       </div>
-    </Panel>
-  );
-}
-
-function Services({ metrics }) {
-  const pcOnline = metrics.pcUp === 1;
-  const serverOnline = metrics.serverUp === 1;
-  const services = [
-    ['PROMETHEUS', 'ONLINE'],
-    ['MAV-CONSOLE', 'ONLINE'],
-    ['MAIN PC', pcOnline ? 'ONLINE' : 'DOWN'],
-    ['PROXMOX', serverOnline ? 'ONLINE' : 'DOWN'],
-    ['LOCAL MODEL', 'TRACKED']
-  ];
-  return (
-    <Panel title="SERVICE MAP" className="services">
       <div className="serviceList">
         {services.map(([name, state]) => (
           <div className="serviceRow" key={name}>
@@ -613,6 +592,10 @@ function Services({ metrics }) {
             <em>{state}</em>
           </div>
         ))}
+      </div>
+      <div className="panelFooter">
+        <span className={serverOnline ? 'ok' : 'bad'}>{serverOnline ? 'NODE_EXPORTER ONLINE' : 'NODE_EXPORTER DOWN'}</span>
+        <span>PORT 1 / 2.5Gb</span>
       </div>
     </Panel>
   );
@@ -2065,8 +2048,6 @@ function App() {
             <ModelOps metrics={metrics} modelStatus={modelStatus} orchestratorStatus={orchestratorStatus} />
             <Network metrics={metrics} />
             <Server metrics={metrics} />
-            <Storage metrics={metrics} />
-            <Services metrics={metrics} />
           </div>
         ) : view === 'network' ? (
           <NetworkMapPage metrics={metrics} />

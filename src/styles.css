@@ -1365,17 +1365,13 @@ body {
 .hardwareGrid {
   grid-template-areas:
     "workstation workstation workstation workstation workstation workstation server server server server server server"
-    "network network network network network network model model model model model model"
-    "network network network network network network storage storage storage storage storage storage"
-    "services services services services services services services services services services services services";
+    "network network network network network network model model model model model model";
 }
 
 .hardwareGrid > .workstation { grid-area: workstation; }
 .hardwareGrid > .modelOps { grid-area: model; }
 .hardwareGrid > .network { grid-area: network; }
 .hardwareGrid > .server { grid-area: server; }
-.hardwareGrid > .storage { grid-area: storage; }
-.hardwareGrid > .services { grid-area: services; }
 
 .panel {
   position: relative;
