@@ -344,6 +344,91 @@ async function proxySeoActions(req, res, action) {
   }
 }
 
+async function getFacebookDay1Prompt() {
+  const scheduleFile = path.join(process.env.SEO_AGENTS_APP || 'C:\\Workspace\\Active\\SEO-Agents-App', 'outputs', 'facebook_posting_schedule.md');
+  if (!fs.existsSync(scheduleFile)) {
+    throw new Error('Facebook schedule not found');
+  }
+  const text = fs.readFileSync(scheduleFile, 'utf8');
+  const blocks = text.split(/\n\s*---\s*\n/).filter(b => b.includes('DAY:'));
+  const day1Block = blocks[0];
+  if (!day1Block) throw new Error('Day 1 not found in schedule');
+  const getField = (key) => {
+    const m = day1Block.match(new RegExp(`^\\*{0,2}${key}:\\s*(.*?)\\s*$`, 'm'));
+    return m ? (m[1] || '').replace(/\*\*/g, '').trim() : '';
+  };
+  const service = getField('SERVICE');
+  const hook = getField('HOOK');
+  const body = getField('BODY');
+  const cta = getField('CTA');
+  const hashtags = getField('HASHTAGS');
+  const caption = [
+    hook ? `${hook}\n\n` : '',
+    body || '',
+    hashtags ? `\n\n${hashtags}` : '',
+    cta ? `\n\n${cta}` : '',
+  ].join('').trim();
+  if (!process.env.OPENAI_API_KEY) {
+    const rawPrompt = getField('VIDEO_PROMPT');
+    return { day: 1, prompt: rawPrompt || '', source: 'raw' };
+  }
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      max_tokens: 300,
+      messages: [
+        {
+          role: 'system',
+          content: `You are a video director writing Veo 3 generation prompts for Grizzly Electrical Solutions, a licensed residential and commercial electrician in DFW, Texas.
+
+Write a single vivid, cinematic prompt (100-140 words) that:
+- Opens with an establishing shot that sets a relatable scene (home, family, business)
+- Builds tension around an electrical problem (flickering lights, sparking outlet, dead panel, etc.)
+- Includes a dramatic visual moment — arcing breakers, sparks, smoke, worried faces, a professional electrician arriving
+- Feels like a mini movie trailer — emotional, urgent, real
+- Matches the service and caption topic provided
+- Ends with: Photorealistic, cinematic, 4K, dramatic atmosphere, no text overlays.
+
+Output the prompt only. No explanation, no quotes, no title.`,
+        },
+        {
+          role: 'user',
+          content: `Service: ${service}\nHook: ${hook}\nCaption:\n${caption}`,
+        },
+      ],
+    }),
+  });
+  const json = await res.json();
+  if (json.error) {
+    const rawPrompt = getField('VIDEO_PROMPT');
+    return { day: 1, prompt: rawPrompt || '', source: 'raw', gptError: json.error.message };
+  }
+  const generated = json.choices?.[0]?.message?.content?.trim();
+  return { day: 1, prompt: generated || '', source: 'gpt4o-mini' };
+}
+
+async function updateFacebookDay1Prompt(newPrompt) {
+  const scheduleFile = path.join(process.env.SEO_AGENTS_APP || 'C:\\Workspace\\Active\\SEO-Agents-App', 'outputs', 'facebook_posting_schedule.md');
+  if (!fs.existsSync(scheduleFile)) {
+    throw new Error('Facebook schedule not found');
+  }
+  const text = fs.readFileSync(scheduleFile, 'utf8');
+  const blocks = text.split(/\n\s*---\s*\n/);
+  if (blocks.length === 0) throw new Error('Invalid schedule format');
+  const day1Block = blocks[0];
+  const updated = day1Block.replace(
+    /^VIDEO_PROMPT:\s*.*?$/m,
+    `VIDEO_PROMPT: ${newPrompt}`
+  ).replace(
+    /^\*{0,2}VIDEO_PROMPT:\s*\*{0,2}.*?$/m,
+    `VIDEO_PROMPT: ${newPrompt}`
+  );
+  blocks[0] = updated;
+  fs.writeFileSync(scheduleFile, blocks.join('\n---\n'), 'utf8');
+}
+
 async function readJsonBody(req) {
   let body = '';
   for await (const chunk of req) {
@@ -2052,6 +2137,17 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/workflows/seo/posts/week') {
     sendJson(res, 200, await callRepoBridge('/seo/posts/week', { timeoutMs: 10_000 }));
+    return;
+  }
+  if (url.pathname === '/api/workflows/seo/facebook/day1-prompt') {
+    const prompt = await getFacebookDay1Prompt();
+    sendJson(res, 200, prompt);
+    return;
+  }
+  if (url.pathname === '/api/workflows/seo/facebook/approve-prompt' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    await updateFacebookDay1Prompt(body.prompt);
+    sendJson(res, 200, { ok: true });
     return;
   }
   if (url.pathname === '/api/orchestrator/plan' && req.method === 'POST') {

@@ -149,6 +149,22 @@ export async function querySeoWeekPosts() {
   return response.json();
 }
 
+export async function getFacebookDay1Prompt() {
+  const response = await fetch(api('/api/workflows/seo/facebook/day1-prompt'), { cache: 'no-store' });
+  if (!response.ok) throw new Error(`Failed to fetch Facebook prompt: ${response.status}`);
+  return response.json();
+}
+
+export async function approveFacebookDay1Prompt(prompt) {
+  const response = await fetch(api('/api/workflows/seo/facebook/approve-prompt'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!response.ok) throw new Error(`Failed to approve prompt: ${response.status}`);
+  return response.json();
+}
+
 export async function runSeoAction(actionId, live = false) {
   const response = await fetch(api('/api/workflows/seo/actions/run'), {
     method: 'POST',

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { querySeoWorkflow, querySeoActions, approveSeoAction, runSeoAction, querySeoWeekPosts } from './lib/api.js';
+import { querySeoWorkflow, querySeoActions, approveSeoAction, runSeoAction, querySeoWeekPosts, api } from './lib/api.js';
 
 const TYPE_LABEL = { seo_run: 'SEO RUN', website_task: 'WEBSITE TASK', social_post: 'SOCIAL POST' };
 const STATE_COLOR = { pending_approval: '#f59e0b', needs_approval: '#f59e0b', approved: '#10b981', executing: '#6366f1', complete: '#10b981', error: '#ef4444', 'not-configured': '#6b7280' };
@@ -10,6 +10,46 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 function clean(str) {
   return (str || '').replace(/\*\*/g, '').trim();
+}
+
+function FacebookPromptModal({ isOpen, prompt, onApprove, onCancel, loading }) {
+  if (!isOpen) return null;
+  const [edited, setEdited] = useState(prompt);
+  useEffect(() => setEdited(prompt), [prompt]);
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: '#00000080', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+      <div style={{ background: '#161922', border: '1px solid #2a2f45', borderRadius: 10, padding: 32, maxWidth: 700, width: '90vw', maxHeight: '90vh', overflow: 'auto' }}>
+        <h2 style={{ color: '#f1f5f9', marginTop: 0, marginBottom: 16, fontSize: 18, fontWeight: 700 }}>Facebook Day 1 Video Prompt</h2>
+        <p style={{ color: '#94a3b8', fontSize: 12, marginBottom: 16 }}>Review and approve the video generation prompt for Day 1, or edit it below.</p>
+        <textarea
+          value={edited}
+          onChange={(e) => setEdited(e.target.value)}
+          disabled={loading}
+          style={{
+            width: '100%', height: 200, padding: 12, borderRadius: 6, border: '1px solid #2a2f45',
+            background: '#0f1117', color: '#f1f5f9', fontSize: 13, fontFamily: 'monospace',
+            resize: 'vertical', marginBottom: 16, opacity: loading ? 0.6 : 1,
+          }}
+        />
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button
+            onClick={() => onApprove(edited)}
+            disabled={loading}
+            style={{ flex: 1, padding: '10px 0', background: loading ? '#2a2f45' : '#10b981', border: 'none', borderRadius: 6, color: '#fff', fontSize: 13, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer' }}
+          >
+            {loading ? 'Approving...' : '✓ APPROVE PROMPT'}
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            style={{ flex: 1, padding: '10px 0', background: '#2a2f45', border: '1px solid #2a2f45', borderRadius: 6, color: '#94a3b8', fontSize: 13, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer' }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function WeekPostsSection({ weekPosts }) {
@@ -145,8 +185,25 @@ function ActionCard({ action, onApprove, onRun, busy }) {
   const [approving, setApproving] = useState(false);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
+  const [promptModal, setPromptModal] = useState({ isOpen: false, prompt: '', loading: false });
+
+  const isFacebookPosts = action.type === 'social_post' && action.posts_count > 0 && action.label?.includes('Facebook');
 
   const handleApprove = async () => {
+    if (isFacebookPosts) {
+      setApproving(true);
+      setResult(null);
+      try {
+        const response = await fetch(api('/api/workflows/seo/facebook/day1-prompt'), { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Failed to fetch prompt: ${response.status}`);
+        const data = await response.json();
+        setPromptModal({ isOpen: true, prompt: data.prompt, loading: false });
+      } catch (err) {
+        setResult({ ok: false, msg: err.message });
+        setApproving(false);
+      }
+      return;
+    }
     setApproving(true);
     setResult(null);
     try {
@@ -155,6 +212,27 @@ function ActionCard({ action, onApprove, onRun, busy }) {
       onApprove?.();
     } catch (err) {
       setResult({ ok: false, msg: err.message });
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handlePromptApprove = async (editedPrompt) => {
+    setPromptModal({ ...promptModal, loading: true });
+    try {
+      const updateRes = await fetch(api('/api/workflows/seo/facebook/approve-prompt'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: editedPrompt }),
+      });
+      if (!updateRes.ok) throw new Error(`Failed to update prompt: ${updateRes.status}`);
+      const approveRes = await approveSeoAction(action.id);
+      setResult({ ok: true, msg: approveRes.message || 'Approved — bridge will execute shortly.' });
+      setPromptModal({ isOpen: false, prompt: '', loading: false });
+      onApprove?.();
+    } catch (err) {
+      setResult({ ok: false, msg: err.message });
+      setPromptModal({ ...promptModal, loading: false });
     } finally {
       setApproving(false);
     }
@@ -178,41 +256,53 @@ function ActionCard({ action, onApprove, onRun, busy }) {
   const color = STATE_COLOR[action.status] || '#6b7280';
 
   return (
-    <div style={{ background: '#1a1d26', border: `1px solid ${isPending ? '#f59e0b33' : '#2a2f45'}`, borderRadius: 8, padding: '14px 18px', marginBottom: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <StatusBadge label={TYPE_LABEL[action.type] || action.type} color="#6b7280" />
-        <span style={{ color: '#f1f5f9', fontWeight: 600, flex: 1, fontSize: 14 }}>{action.label}</span>
-        {action.posts_count != null && (
-          <span style={{ color: '#6b7280', fontSize: 12 }}>{action.posts_count} posts</span>
+    <>
+      <div style={{ background: '#1a1d26', border: `1px solid ${isPending ? '#f59e0b33' : '#2a2f45'}`, borderRadius: 8, padding: '14px 18px', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <StatusBadge label={TYPE_LABEL[action.type] || action.type} color="#6b7280" />
+          <span style={{ color: '#f1f5f9', fontWeight: 600, flex: 1, fontSize: 14 }}>{action.label}</span>
+          {action.posts_count != null && (
+            <span style={{ color: '#6b7280', fontSize: 12 }}>{action.posts_count} posts</span>
+          )}
+          <StatusBadge label={(action.status || '').replace(/_/g, ' ')} color={color} />
+        </div>
+
+        {isPending && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button
+              onClick={handleApprove}
+              disabled={approving || running || busy}
+              style={{ flex: 1, padding: '9px 0', background: approving ? '#2a2f45' : '#10b981', border: 'none', borderRadius: 6, color: '#fff', fontSize: 13, fontWeight: 700, cursor: approving ? 'not-allowed' : 'pointer' }}
+            >
+              {approving ? 'Approving...' : '✓ APPROVE'}
+            </button>
+            <button
+              onClick={handleRun}
+              disabled={approving || running || busy}
+              style={{ flex: 1, padding: '9px 0', background: running ? '#2a2f45' : '#6366f1', border: 'none', borderRadius: 6, color: '#fff', fontSize: 13, fontWeight: 700, cursor: running ? 'not-allowed' : 'pointer' }}
+            >
+              {running ? 'Running...' : '▶ RUN NOW'}
+            </button>
+          </div>
         )}
-        <StatusBadge label={(action.status || '').replace(/_/g, ' ')} color={color} />
+
+        {result && (
+          <div style={{ marginTop: 8, padding: '6px 10px', background: result.ok ? '#10b98122' : '#ef444422', border: `1px solid ${result.ok ? '#10b98144' : '#ef444444'}`, borderRadius: 5, color: result.ok ? '#10b981' : '#ef4444', fontSize: 12 }}>
+            {result.ok ? '✓ ' : '✗ '}{result.msg}
+          </div>
+        )}
       </div>
-
-      {isPending && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-          <button
-            onClick={handleApprove}
-            disabled={approving || running || busy}
-            style={{ flex: 1, padding: '9px 0', background: approving ? '#2a2f45' : '#10b981', border: 'none', borderRadius: 6, color: '#fff', fontSize: 13, fontWeight: 700, cursor: approving ? 'not-allowed' : 'pointer' }}
-          >
-            {approving ? 'Approving...' : '✓ APPROVE'}
-          </button>
-          <button
-            onClick={handleRun}
-            disabled={approving || running || busy}
-            style={{ flex: 1, padding: '9px 0', background: running ? '#2a2f45' : '#6366f1', border: 'none', borderRadius: 6, color: '#fff', fontSize: 13, fontWeight: 700, cursor: running ? 'not-allowed' : 'pointer' }}
-          >
-            {running ? 'Running...' : '▶ RUN NOW'}
-          </button>
-        </div>
-      )}
-
-      {result && (
-        <div style={{ marginTop: 8, padding: '6px 10px', background: result.ok ? '#10b98122' : '#ef444422', border: `1px solid ${result.ok ? '#10b98144' : '#ef444444'}`, borderRadius: 5, color: result.ok ? '#10b981' : '#ef4444', fontSize: 12 }}>
-          {result.ok ? '✓ ' : '✗ '}{result.msg}
-        </div>
-      )}
-    </div>
+      <FacebookPromptModal
+        isOpen={promptModal.isOpen}
+        prompt={promptModal.prompt}
+        loading={promptModal.loading}
+        onApprove={handlePromptApprove}
+        onCancel={() => {
+          setPromptModal({ isOpen: false, prompt: '', loading: false });
+          setApproving(false);
+        }}
+      />
+    </>
   );
 }
 
