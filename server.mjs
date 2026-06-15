@@ -2050,6 +2050,10 @@ const server = http.createServer(async (req, res) => {
     await proxySeoActions(req, res, 'run');
     return;
   }
+  if (url.pathname === '/api/workflows/seo/posts/week') {
+    sendJson(res, 200, await callRepoBridge('/seo/posts/week', { timeoutMs: 10_000 }));
+    return;
+  }
   if (url.pathname === '/api/orchestrator/plan' && req.method === 'POST') {
     await createOrchestratorPlan(req, res);
     return;

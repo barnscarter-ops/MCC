@@ -1,8 +1,137 @@
 import { useCallback, useEffect, useState } from 'react';
-import { querySeoWorkflow, querySeoActions, approveSeoAction, runSeoAction } from './lib/api.js';
+import { querySeoWorkflow, querySeoActions, approveSeoAction, runSeoAction, querySeoWeekPosts } from './lib/api.js';
 
 const TYPE_LABEL = { seo_run: 'SEO RUN', website_task: 'WEBSITE TASK', social_post: 'SOCIAL POST' };
 const STATE_COLOR = { pending_approval: '#f59e0b', needs_approval: '#f59e0b', approved: '#10b981', executing: '#6366f1', complete: '#10b981', error: '#ef4444', 'not-configured': '#6b7280' };
+
+const POST_STATUS_COLOR = { posted: '#10b981', done: '#10b981', scheduled: '#06b6d4', approved: '#6366f1', pending_approval: '#f59e0b', posting: '#8b5cf6', error: '#ef4444' };
+const POST_STATUS_LABEL = { posted: 'POSTED', done: 'POSTED', scheduled: 'SCHEDULED', approved: 'QUEUED', pending_approval: 'PENDING', posting: 'POSTING…', error: 'ERROR' };
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function clean(str) {
+  return (str || '').replace(/\*\*/g, '').trim();
+}
+
+function WeekPostsSection({ weekPosts }) {
+  const [tab, setTab] = useState('facebook');
+  if (!weekPosts) return null;
+
+  const posts = tab === 'facebook' ? weekPosts.facebook : weekPosts.gbp;
+  const today = new Date().toISOString().slice(0, 10);
+
+  const fbCount = weekPosts.facebook?.length || 0;
+  const gbpCount = weekPosts.gbp?.length || 0;
+  const fbPosted = weekPosts.facebook?.filter(p => p.status === 'posted' || p.status === 'done').length || 0;
+  const gbpPosted = weekPosts.gbp?.filter(p => p.status === 'posted' || p.status === 'done').length || 0;
+  const gbpScheduled = weekPosts.gbp?.filter(p => p.status === 'scheduled').length || 0;
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <div style={{ borderTop: '1px solid #2a2f45', paddingTop: 24, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ color: '#94a3b8', fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase' }}>
+          This Week's Posts
+        </div>
+        <div style={{ color: '#6b7280', fontSize: 11 }}>
+          {weekPosts.week_start} – {weekPosts.week_end}
+        </div>
+      </div>
+
+      {/* Platform tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {[
+          { key: 'facebook', label: 'Facebook', count: fbCount, posted: fbPosted, label2: null },
+          { key: 'gbp', label: 'Google Business', count: gbpCount, posted: gbpPosted, scheduled: gbpScheduled },
+        ].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            padding: '7px 14px', borderRadius: 6, border: '1px solid',
+            borderColor: tab === t.key ? '#6366f1' : '#2a2f45',
+            background: tab === t.key ? '#6366f122' : 'transparent',
+            color: tab === t.key ? '#818cf8' : '#6b7280',
+            fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            {t.label}
+            <span style={{ background: '#2a2f45', borderRadius: 10, padding: '1px 6px', fontSize: 10, color: '#94a3b8' }}>
+              {t.scheduled != null
+                ? `${t.posted} posted · ${t.scheduled} sched`
+                : `${t.posted}/${t.count}`}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Posts grid */}
+      {posts.length === 0 ? (
+        <div style={{ color: '#6b7280', fontSize: 13, padding: '20px 0' }}>No posts scheduled this week.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {posts.map(post => {
+            const isToday = post.post_date === today;
+            const isPast = post.post_date < today;
+            // For scheduled GBP posts: show urgency based on date
+            let statusColor = POST_STATUS_COLOR[post.status] || (isPast ? '#ef4444' : '#6b7280');
+            let statusLabel = POST_STATUS_LABEL[post.status] || (isPast ? 'MISSED?' : 'SCHEDULED');
+            if (post.status === 'scheduled') {
+              if (isToday) { statusColor = '#f59e0b'; statusLabel = 'POST TODAY'; }
+              else if (isPast) { statusColor = '#ef4444'; statusLabel = 'OVERDUE'; }
+            }
+            const dateObj = new Date(post.post_date + 'T12:00:00');
+            const dayLabel = DAYS[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
+
+            return (
+              <div key={post.id} style={{
+                background: isToday ? '#1e2235' : '#161922',
+                border: `1px solid ${isToday ? '#6366f144' : '#2a2f45'}`,
+                borderRadius: 7, padding: '10px 14px',
+                display: 'flex', alignItems: 'center', gap: 12,
+              }}>
+                {/* Day */}
+                <div style={{ minWidth: 42, textAlign: 'center' }}>
+                  <div style={{ color: isToday ? '#818cf8' : '#6b7280', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' }}>{dayLabel}</div>
+                  <div style={{ color: isToday ? '#f1f5f9' : '#94a3b8', fontSize: 13, fontWeight: 600 }}>{post.post_date?.slice(5)}</div>
+                </div>
+
+                {/* Divider */}
+                <div style={{ width: 1, height: 36, background: '#2a2f45', flexShrink: 0 }} />
+
+                {/* Content */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: '#f1f5f9', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {clean(post.service) || clean(post.hook) || `Day ${post.day}`}
+                  </div>
+                  {post.hook && (
+                    <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {clean(post.hook)}
+                    </div>
+                  )}
+                </div>
+
+                {/* Status */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, flexShrink: 0 }}>
+                  <span style={{
+                    background: statusColor + '22', color: statusColor,
+                    border: `1px solid ${statusColor}44`, borderRadius: 4,
+                    padding: '2px 7px', fontSize: 10, fontWeight: 700, letterSpacing: 1,
+                  }}>{statusLabel}</span>
+                  {post.posted_at && (
+                    <span style={{ color: '#6b7280', fontSize: 10 }}>
+                      {new Date(post.posted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                  {post.error && (
+                    <span style={{ color: '#ef4444', fontSize: 10, maxWidth: 140, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={post.error}>
+                      {post.error}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StatusBadge({ label, color }) {
   return (
@@ -90,15 +219,17 @@ function ActionCard({ action, onApprove, onRun, busy }) {
 export default function SEOApprovalPage() {
   const [workflow, setWorkflow] = useState(null);
   const [actions, setActions] = useState([]);
+  const [weekPosts, setWeekPosts] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [wf, ac] = await Promise.all([querySeoWorkflow(), querySeoActions()]);
+      const [wf, ac, wp] = await Promise.all([querySeoWorkflow(), querySeoActions(), querySeoWeekPosts()]);
       setWorkflow(wf);
       setActions(ac.actions || []);
+      setWeekPosts(wp);
       setError(null);
       setLastUpdated(new Date());
     } catch (err) {
@@ -207,6 +338,8 @@ export default function SEOApprovalPage() {
               <span><strong style={{ color: '#94a3b8' }}>Phase:</strong> {(workflow.activeWorkflow.phase || '').replace(/_/g, ' ')}</span>
             </div>
           )}
+
+          <WeekPostsSection weekPosts={weekPosts} />
         </>
       )}
     </div>

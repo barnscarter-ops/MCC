@@ -143,6 +143,12 @@ export async function approveSeoAction(actionId, note = '') {
   return payload;
 }
 
+export async function querySeoWeekPosts() {
+  const response = await fetch(api('/api/workflows/seo/posts/week'), { cache: 'no-store' });
+  if (!response.ok) throw new Error(`SEO week posts failed: ${response.status}`);
+  return response.json();
+}
+
 export async function runSeoAction(actionId, live = false) {
   const response = await fetch(api('/api/workflows/seo/actions/run'), {
     method: 'POST',
