@@ -33,18 +33,9 @@ const workspacePath = process.env.MAV_CONSOLE_WORKSPACE || __dirname;
 const memoryPath = process.env.MAV_MEMORY_PATH || 'C:\\Users\\carte\\.claude\\projects\\memory';
 const skillsPath = process.env.MAV_SKILLS_PATH || path.join(__dirname, 'skills');
 
-// Roots Claude is allowed to read/write. Add more via MAV_EXTRA_ROOTS (semicolon-separated).
-const ALLOWED_ROOTS = [
-  path.normalize(workspacePath),
-  path.normalize('C:\\Workspace'),
-  path.normalize('C:\\llama-cpp-server'),
-  path.normalize(memoryPath),
-  path.normalize(path.dirname(memoryPath)), // Parent of memory dir — e.g. C:\Users\carte\.claude\projects
-  path.normalize(skillsPath),
-  ...((process.env.MAV_EXTRA_ROOTS || '').split(';').filter(Boolean).map(p => path.normalize(p)))
-];
-// Never touch these regardless of root
-const BLOCKED_ABS_RE = /[/\\](\.env$|\.git[/\\]|Windows[/\\]|Program Files|AppData[/\\]Local[/\\]Temp)/i;
+// Blocked system and sensitive paths — everything else is accessible.
+// MAV_EXTRA_ROOTS is kept for backward compat but no longer needed for access control.
+const BLOCKED_ABS_RE = /[/\\](\.env$|\.git[/\\]|Windows[/\\]|Program Files[/\\]?|AppData[/\\]Local[/\\]Temp|System32[/\\]|SysWOW64[/\\]|WindowsApps[/\\])/i;
 
 const orchestratorState = {
   updatedAt: null,
@@ -119,6 +110,24 @@ function triggerSelfImprove() {
   });
   child.unref();
   console.log('[self-improve] triggered in background');
+}
+
+function recordChatFailure(mode, prompt, error) {
+  try {
+    const workerMap = { build: 'claude-qwen-build', ops: 'claude-qwen-ops', ask: 'ask-maverick' };
+    const run = {
+      id: `chat-${Date.now()}`,
+      taskTitle: `${mode.toUpperCase()}: ${String(prompt).slice(0, 80)}`,
+      worker: workerMap[mode] || mode,
+      status: 'failed',
+      error: String(error),
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    addLedgerRun(run);
+    triggerSelfImprove();
+  } catch {}
 }
 
 function parseMemoryFrontmatter(text) {
@@ -1010,9 +1019,7 @@ function resolveSafePath(p) {
     if (BLOCKED_REL.test(rel.replace(/\\/g, '/'))) return null;
     abs = path.join(workspacePath, rel);
   }
-  // Must be under an allowed root
-  const under = ALLOWED_ROOTS.some(root => abs.startsWith(root + path.sep) || abs === root);
-  if (!under) return null;
+  // Block Windows system and sensitive directories only
   if (BLOCKED_ABS_RE.test(abs)) return null;
   return abs;
 }
@@ -1045,12 +1052,10 @@ function workspaceTree() {
   // MCC project — deep
   lines.push(`[MCC] ${workspacePath}`);
   walk(workspacePath, '  ', 0, 3);
-  // Other roots — shallow overview
-  for (const root of ALLOWED_ROOTS) {
-    if (root === path.normalize(workspacePath) || root === path.normalize(memoryPath)) continue;
-    if (!fs.existsSync(root)) continue;
-    lines.push(`\n[ROOT] ${root}`);
-    walk(root, '  ', 0, 1);
+  // Skills dir — shallow
+  if (skillsPath !== workspacePath && fs.existsSync(skillsPath)) {
+    lines.push(`\n[SKILLS] ${skillsPath}`);
+    walk(skillsPath, '  ', 0, 1);
   }
   return lines.join('\n');
 }
@@ -1188,16 +1193,350 @@ function stagingSlug(p) {
   return p.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
+// OPS-mode executor — handles personal assistant tools not in runExecTool
+async function runOpsExecTool(name, args, staged) {
+  // Document: read Word
+  if (name === 'read_docx') {
+    const abs = resolveSafePath(args.path);
+    if (!abs) return 'ERROR: path not allowed';
+    try {
+      const { default: mammoth } = await import('mammoth');
+      const result = await mammoth.extractRawText({ path: abs });
+      const text = result.value || '';
+      return text.length > 8000 ? text.slice(0, 8000) + '\n...[truncated]' : text || '(empty document)';
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Document: read PDF
+  if (name === 'read_pdf') {
+    const abs = resolveSafePath(args.path);
+    if (!abs) return 'ERROR: path not allowed';
+    try {
+      const { createRequire } = await import('module');
+      const req = createRequire(import.meta.url);
+      const pdfParse = req('pdf-parse');
+      const buf = fs.readFileSync(abs);
+      const data = await pdfParse(buf);
+      const text = data.text || '';
+      return text.length > 8000 ? text.slice(0, 8000) + '\n...[truncated]' : text || '(empty PDF)';
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Document: read Excel
+  if (name === 'read_xlsx') {
+    const abs = resolveSafePath(args.path);
+    if (!abs) return 'ERROR: path not allowed';
+    try {
+      const { default: XLSX } = await import('xlsx');
+      const wb = XLSX.readFile(abs);
+      const sheetName = args.sheet || wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      if (!ws) return `ERROR: Sheet "${sheetName}" not found. Available: ${wb.SheetNames.join(', ')}`;
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      const preview = JSON.stringify(rows.slice(0, 50), null, 2);
+      return `Sheet: ${sheetName} (${rows.length} rows)\n${preview}`;
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Document: write Excel
+  if (name === 'write_xlsx') {
+    const abs = resolveSafePath(args.path);
+    if (!abs) return 'ERROR: path not allowed';
+    const sheets = Array.isArray(args.sheets) ? args.sheets : [];
+    if (!sheets.length) return 'ERROR: sheets array required';
+    try {
+      const { default: XLSX } = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      for (const s of sheets) {
+        const headers = Array.isArray(s.headers) ? s.headers : [];
+        const rows = Array.isArray(s.rows) ? s.rows : [];
+        const wsData = headers.length ? [headers, ...rows] : rows;
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        XLSX.utils.book_append_sheet(wb, ws, String(s.name || 'Sheet1').slice(0, 31));
+      }
+      XLSX.writeFile(wb, abs);
+      staged.files.push({ path: abs, content: `[binary xlsx: ${sheets.length} sheet(s)]` });
+      return `CREATED ${abs} with ${sheets.length} sheet(s): ${sheets.map(s => s.name).join(', ')}`;
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Document: write CSV
+  if (name === 'write_csv') {
+    const abs = resolveSafePath(args.path);
+    if (!abs) return 'ERROR: path not allowed';
+    const headers = Array.isArray(args.headers) ? args.headers : [];
+    const rows = Array.isArray(args.rows) ? args.rows : [];
+    try {
+      const escape = (v) => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s; };
+      const lines = [];
+      if (headers.length) lines.push(headers.map(escape).join(','));
+      for (const row of rows) lines.push((Array.isArray(row) ? row : Object.values(row)).map(escape).join(','));
+      const csv = lines.join('\n');
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, csv, 'utf8');
+      staged.files.push({ path: abs, content: csv });
+      return `CREATED ${abs} (${lines.length} rows, ${csv.length} chars). Staged for APPLY.`;
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Document: read CSV
+  if (name === 'read_csv') {
+    const abs = resolveSafePath(args.path);
+    if (!abs) return 'ERROR: path not allowed';
+    try {
+      const text = fs.readFileSync(abs, 'utf8');
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      const preview = lines.slice(0, 50).join('\n');
+      return `${lines.length} rows\n${preview}${lines.length > 50 ? '\n...[truncated]' : ''}`;
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Email helpers
+  function getEmailConfig() {
+    const imapHost = process.env.EMAIL_IMAP_HOST;
+    const imapPort = Number(process.env.EMAIL_IMAP_PORT || 993);
+    const imapUser = process.env.EMAIL_IMAP_USER;
+    const imapPass = process.env.EMAIL_IMAP_PASS;
+    const smtpHost = process.env.EMAIL_SMTP_HOST || imapHost?.replace('imap.', 'smtp.');
+    const smtpPort = Number(process.env.EMAIL_SMTP_PORT || 587);
+    const smtpUser = process.env.EMAIL_SMTP_USER || imapUser;
+    const smtpPass = process.env.EMAIL_SMTP_PASS || imapPass;
+    return { imapHost, imapPort, imapUser, imapPass, smtpHost, smtpPort, smtpUser, smtpPass };
+  }
+
+  // Email: list
+  if (name === 'list_emails') {
+    const cfg = getEmailConfig();
+    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured. Add EMAIL_IMAP_HOST, EMAIL_IMAP_USER, EMAIL_IMAP_PASS to .env';
+    const mailbox = String(args.mailbox || 'INBOX');
+    const limit = Math.min(Number(args.limit || 20), 50);
+    try {
+      const { ImapFlow } = await import('imapflow');
+      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
+      await client.connect();
+      const lock = await client.getMailboxLock(mailbox);
+      try {
+        const msgs = [];
+        for await (const msg of client.fetch({ seq: `${Math.max(1, client.mailbox.exists - limit + 1)}:*` }, { envelope: true, uid: true })) {
+          msgs.push({ uid: msg.uid, seq: msg.seq, subject: msg.envelope.subject || '(no subject)', from: msg.envelope.from?.[0]?.address || '', date: msg.envelope.date?.toISOString() || '' });
+        }
+        return JSON.stringify(msgs.reverse(), null, 2);
+      } finally { lock.release(); await client.logout(); }
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Email: read
+  if (name === 'read_email') {
+    const cfg = getEmailConfig();
+    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured.';
+    const uid = String(args.uid || '');
+    if (!uid) return 'ERROR: uid required';
+    try {
+      const { ImapFlow } = await import('imapflow');
+      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
+      await client.connect();
+      const lock = await client.getMailboxLock('INBOX');
+      try {
+        const msg = await client.fetchOne(uid, { envelope: true, bodyStructure: true, source: true }, { uid: true });
+        if (!msg) return `ERROR: Message UID ${uid} not found`;
+        const src = msg.source?.toString('utf8') || '';
+        // Strip base64 attachments, keep headers + text parts
+        const stripped = src.replace(/Content-Transfer-Encoding: base64[\s\S]*?(?=--|\z)/gi, '[attachment]\n').slice(0, 6000);
+        return `From: ${msg.envelope.from?.[0]?.address}\nSubject: ${msg.envelope.subject}\nDate: ${msg.envelope.date}\n\n${stripped}`;
+      } finally { lock.release(); await client.logout(); }
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Email: search
+  if (name === 'search_emails') {
+    const cfg = getEmailConfig();
+    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured.';
+    const query = String(args.query || '').trim();
+    if (!query) return 'ERROR: query required';
+    const limit = Math.min(Number(args.limit || 10), 30);
+    try {
+      const { ImapFlow } = await import('imapflow');
+      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
+      await client.connect();
+      const lock = await client.getMailboxLock('INBOX');
+      try {
+        const uids = await client.search({ or: [{ subject: query }, { from: query }, { body: query }] }, { uid: true });
+        const slice = uids.slice(-limit);
+        const msgs = [];
+        for await (const msg of client.fetch(slice.join(','), { envelope: true, uid: true }, { uid: true })) {
+          msgs.push({ uid: msg.uid, subject: msg.envelope.subject || '(no subject)', from: msg.envelope.from?.[0]?.address || '', date: msg.envelope.date?.toISOString() || '' });
+        }
+        return `Found ${uids.length} messages (showing ${msgs.length}):\n${JSON.stringify(msgs.reverse(), null, 2)}`;
+      } finally { lock.release(); await client.logout(); }
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Email: send
+  if (name === 'send_email') {
+    const cfg = getEmailConfig();
+    if (!cfg.smtpHost || !cfg.smtpUser || !cfg.smtpPass) return 'ERROR: Email not configured. Add EMAIL_SMTP_HOST, EMAIL_SMTP_USER, EMAIL_SMTP_PASS to .env';
+    const to = String(args.to || '').trim();
+    const subject = String(args.subject || '').trim();
+    const body = String(args.body || '').trim();
+    if (!to || !subject || !body) return 'ERROR: to, subject, and body are required';
+    try {
+      const { default: nodemailer } = await import('nodemailer');
+      const transporter = nodemailer.createTransport({ host: cfg.smtpHost, port: cfg.smtpPort, secure: cfg.smtpPort === 465, auth: { user: cfg.smtpUser, pass: cfg.smtpPass } });
+      const info = await transporter.sendMail({ from: cfg.smtpUser, to, cc: args.cc || undefined, subject, text: body });
+      return `Email sent. Message ID: ${info.messageId}`;
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Email: create draft
+  if (name === 'create_draft') {
+    const cfg = getEmailConfig();
+    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured.';
+    const to = String(args.to || '').trim();
+    const subject = String(args.subject || '').trim();
+    const body = String(args.body || '').trim();
+    if (!to || !subject) return 'ERROR: to and subject are required';
+    try {
+      const { ImapFlow } = await import('imapflow');
+      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
+      await client.connect();
+      const raw = `From: ${cfg.imapUser}\r\nTo: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain\r\n\r\n${body}`;
+      await client.append('Drafts', Buffer.from(raw), ['\\Draft']);
+      await client.logout();
+      return `Draft saved to Drafts folder: "${subject}" → ${to}`;
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Email: label/move
+  if (name === 'label_email') {
+    const cfg = getEmailConfig();
+    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured.';
+    const uid = String(args.uid || '');
+    const label = String(args.label || '').trim();
+    if (!uid || !label) return 'ERROR: uid and label required';
+    try {
+      const { ImapFlow } = await import('imapflow');
+      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
+      await client.connect();
+      const lock = await client.getMailboxLock('INBOX');
+      try {
+        await client.messageMove(uid, label, { uid: true });
+        return `Moved message UID ${uid} to ${label}`;
+      } catch {
+        await client.messageFlagsAdd(uid, [`\\${label}`], { uid: true });
+        return `Applied label "${label}" to message UID ${uid}`;
+      } finally { lock.release(); await client.logout(); }
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // File: move
+  if (name === 'move_file') {
+    const src = resolveSafePath(args.from);
+    const dest = resolveSafePath(args.to);
+    if (!src) return 'ERROR: source path not allowed';
+    if (!dest) return 'ERROR: destination path not allowed';
+    try { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.renameSync(src, dest); return `Moved ${src} → ${dest}`; }
+    catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // File: copy
+  if (name === 'copy_file') {
+    const src = resolveSafePath(args.from);
+    const dest = resolveSafePath(args.to);
+    if (!src) return 'ERROR: source path not allowed';
+    if (!dest) return 'ERROR: destination path not allowed';
+    try { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.copyFileSync(src, dest); return `Copied ${src} → ${dest}`; }
+    catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // File: delete (staged only — never immediate)
+  if (name === 'delete_file') {
+    const abs = resolveSafePath(args.path);
+    if (!abs) return 'ERROR: path not allowed';
+    staged.files.push({ path: abs, content: '__DELETE__' });
+    return `DELETE staged for ${abs}. This will be executed when user clicks APPLY.`;
+  }
+
+  // Analysis: image via Anthropic Vision
+  if (name === 'analyze_image') {
+    const abs = resolveSafePath(args.path);
+    if (!abs) return 'ERROR: path not allowed';
+    if (!anthropicApiKey) return 'ERROR: ANTHROPIC_API_KEY not configured';
+    try {
+      const imgBuf = fs.readFileSync(abs);
+      const base64 = imgBuf.toString('base64');
+      const ext = path.extname(abs).toLowerCase().replace('.', '');
+      const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+      const mediaType = mimeMap[ext] || 'image/jpeg';
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': anthropicApiKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({
+          model: anthropicModel,
+          max_tokens: 1024,
+          messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } }, { type: 'text', text: 'Describe this image in detail.' }] }]
+        })
+      });
+      if (!r.ok) return `ERROR: Vision API ${r.status}`;
+      const payload = await r.json();
+      return payload.content?.[0]?.text || '(no description)';
+    } catch (err) { return `ERROR: ${err.message}`; }
+  }
+
+  // Agent: create agent .md definition (staged for review)
+  if (name === 'create_agent') {
+    const abs = resolveSafePath(args.path);
+    if (!abs) return 'ERROR: path not allowed';
+    const content = String(args.content || '').trim();
+    if (!content) return 'ERROR: content required';
+    staged.files.push({ path: abs, content });
+    return `STAGED agent definition at ${abs}. Click APPLY to write it to disk.`;
+  }
+
+  // Skill: create skill .md (staged for review)
+  if (name === 'create_skill') {
+    const abs = resolveSafePath(args.path || path.join(skillsPath, 'new-skill.md'));
+    if (!abs) return 'ERROR: path not allowed';
+    const content = String(args.content || '').trim();
+    if (!content) return 'ERROR: content required';
+    staged.files.push({ path: abs, content });
+    return `STAGED skill at ${abs}. Click APPLY to install it into the skills library.`;
+  }
+
+  // PM2: deploy service
+  if (name === 'deploy_pm2') {
+    const script = String(args.script || '').trim();
+    const name = String(args.name || '').trim();
+    const cwd = String(args.cwd || path.dirname(script)).trim();
+    if (!script || !name) return 'ERROR: script and name required';
+    const ecosystemPath = path.join(cwd, 'ecosystem.config.cjs');
+    let ecosystem = { apps: [] };
+    try { ecosystem = JSON.parse(fs.readFileSync(ecosystemPath, 'utf8')); } catch {}
+    ecosystem.apps = ecosystem.apps.filter(a => a.name !== name);
+    ecosystem.apps.push({ name, script, cwd, autorestart: true, max_restarts: 5, env: { NODE_ENV: 'production' } });
+    const content = `module.exports = ${JSON.stringify(ecosystem, null, 2)};`;
+    staged.files.push({ path: ecosystemPath, content });
+    return `STAGED PM2 entry "${name}" in ${ecosystemPath}. Click APPLY then run: pm2 start ecosystem.config.cjs --only ${name}`;
+  }
+
+  // Fall through to standard exec tools
+  return runExecTool(name, args, staged);
+}
+
 function persistStagedRun(staged) {
   const dir = path.join(stagingRoot, staged.id);
   for (const f of staged.files) {
+    if (f.content === '__DELETE__') continue; // deletions are metadata only
     const target = path.join(dir, 'files', stagingSlug(f.path));
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, f.content);
   }
   fs.writeFileSync(
     path.join(dir, 'manifest.json'),
-    JSON.stringify({ id: staged.id, createdAt: new Date().toISOString(), prompt: staged.prompt, files: staged.files.map((f) => ({ path: f.path, chars: f.content.length })) }, null, 2)
+    JSON.stringify({
+      id: staged.id, createdAt: new Date().toISOString(), prompt: staged.prompt,
+      files: staged.files.filter(f => f.content !== '__DELETE__').map(f => ({ path: f.path, chars: f.content.length })),
+      deletions: staged.files.filter(f => f.content === '__DELETE__').map(f => f.path)
+    }, null, 2)
   );
 }
 
@@ -1221,6 +1560,7 @@ async function applyStagedRun(req, res) {
     }
     const backupDir = path.join(backupRoot, id);
     const applied = [];
+    const deleted = [];
     for (const f of manifest.files) {
       // f.path is an absolute path stored by runExecTool write_file
       const dest = resolveSafePath(f.path);
@@ -1237,9 +1577,21 @@ async function applyStagedRun(req, res) {
       fs.copyFileSync(src, dest);
       applied.push(dest);
     }
+    // Handle staged deletions
+    for (const p of (manifest.deletions || [])) {
+      const dest = resolveSafePath(p);
+      if (!dest) continue;
+      if (fs.existsSync(dest)) {
+        const bak = path.join(backupDir, stagingSlug(p));
+        fs.mkdirSync(path.dirname(bak), { recursive: true });
+        fs.copyFileSync(dest, bak);
+        fs.unlinkSync(dest);
+        deleted.push(dest);
+      }
+    }
     manifest.appliedAt = new Date().toISOString();
     fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
-    sendJson(res, 200, { ok: true, applied, backupDir });
+    sendJson(res, 200, { ok: true, applied, deleted, backupDir });
   } catch (error) {
     sendJson(res, 500, { error: error.message });
   }
@@ -1316,6 +1668,7 @@ async function handleBuildOrchestration(res, controller, prompt, histMsgs, ctxBl
     } catch (err) {
       if (err.name === 'AbortError') { res.write('data: [DONE]\n\n'); res.end(); return; }
       sseWrite(res, `[Claude error: ${err.message}]\n`);
+      recordChatFailure('build', prompt, err);
       break;
     }
 
@@ -1384,6 +1737,103 @@ async function handleBuildOrchestration(res, controller, prompt, histMsgs, ctxBl
   res.end();
 }
 
+async function handleOpsOrchestration(res, controller, prompt, histMsgs, ctxBlock, attachBlock = '', folderPaths = []) {
+  sseWrite(res, '\n**[MAVERICK OPS — CLAUDE ORCHESTRATOR]**\n\n');
+
+  const staged = { id: `stage-${Date.now()}`, prompt, files: [], readPaths: new Set() };
+  const recentHist = histMsgs.slice(-6).map(m => ({ role: m.role, content: String(m.content) }));
+
+  // Build folder tree for attached paths
+  let treeBlock = '';
+  if (folderPaths.length) {
+    const skip = new Set(['node_modules', '.git', 'dist', 'tmp', '.mav-console', '.venv', '__pycache__']);
+    const lines = [];
+    const walk = (dir, prefix, depth) => {
+      if (depth > 3 || lines.length >= 120) return;
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (skip.has(e.name) || e.name.startsWith('.') || lines.length >= 120) continue;
+        lines.push(prefix + e.name + (e.isDirectory() ? '/' : ''));
+        if (e.isDirectory()) walk(path.join(dir, e.name), prefix + e.name + '/', depth + 1);
+      }
+    };
+    for (const fp of folderPaths) { lines.push(`[FOLDER] ${fp}`); walk(fp, '  ', 0); }
+    treeBlock = `\nAttached folders:\n${lines.join('\n')}\n`;
+  }
+
+  const userContent = `${treeBlock}${attachBlock}\n${ctxBlock}\n\nRequest: ${prompt}`;
+  const claudeMessages = [
+    ...recentHist,
+    { role: 'user', content: userContent }
+  ];
+
+  for (let round = 0; round < 25 && !controller.signal.aborted; round++) {
+    let directive;
+    try {
+      directive = await callClaude(claudeMessages, controller.signal, CLAUDE_OPS_SYSTEM);
+    } catch (err) {
+      if (err.name === 'AbortError') { res.write('data: [DONE]\n\n'); res.end(); return; }
+      sseWrite(res, `[Claude error: ${err.message}]\n`);
+      recordChatFailure('ops', prompt, err);
+      break;
+    }
+
+    if (directive.done) {
+      if (directive.answer) sseWrite(res, `\n${directive.answer}\n`);
+      else if (directive.summary) sseWrite(res, `\n${directive.summary}\n`);
+      break;
+    }
+
+    if (directive.clarify) {
+      sseWrite(res, `\n${directive.clarify}\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    const task = directive.task;
+    if (!task?.tool) { sseWrite(res, '[Unexpected response — stopping]\n'); break; }
+
+    const label = task.path || task.command || task.url || task.query || task.to || '';
+    sseWrite(res, `→ ${task.tool}(${label}) `);
+
+    let result;
+    try {
+      if (task.tool === 'write_file') {
+        result = await delegateWriteToQwen(task, staged, controller);
+      } else {
+        result = await runOpsExecTool(task.tool, task, staged);
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') { res.write('data: [DONE]\n\n'); res.end(); return; }
+      result = `ERROR: ${err.message}`;
+    }
+
+    const ok = !String(result).startsWith('ERROR') && !String(result).startsWith('REJECTED');
+    sseWrite(res, `${ok ? '✓' : '✗'}\n`);
+
+    claudeMessages.push({ role: 'assistant', content: JSON.stringify(directive) });
+    claudeMessages.push({ role: 'user', content: `Result of ${task.tool}(${label}):\n${String(result).slice(0, 6000)}` });
+  }
+
+  if (controller.signal.aborted) { res.write('data: [DONE]\n\n'); res.end(); return; }
+
+  if (staged.files.length) {
+    persistStagedRun(staged);
+    const nonDelete = staged.files.filter(f => f.content !== '__DELETE__');
+    const toDelete = staged.files.filter(f => f.content === '__DELETE__');
+    let stageMsg = `\n\n[STAGED:${staged.id}] `;
+    if (nonDelete.length) stageMsg += `${nonDelete.length} file(s) ready: ${nonDelete.map(f => path.basename(f.path)).join(', ')}`;
+    if (toDelete.length) stageMsg += `${nonDelete.length ? '; ' : ''}${toDelete.length} deletion(s): ${toDelete.map(f => path.basename(f.path)).join(', ')}`;
+    stageMsg += '. Click APPLY when ready.\n';
+    sseWrite(res, stageMsg);
+  }
+
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
 async function runNimQc(staged, prompt, parentSignal) {
   try {
     let budget = 6000;
@@ -1437,11 +1887,9 @@ You work with an executor (Qwen) who can only follow exact mechanical instructio
 
 Your workflow: analyze the problem → decide the next single action → output JSON → see the result → repeat until done.
 
-Allowed roots you can access:
-- C:\\Workspace (all projects)
-- C:\\llama-cpp-server (local LLM server and models)
-- Claude memory dir (C:\\Users\\carte\\.claude\\projects\\...)
-- Any path in the workspace file tree shown below
+You have read/write access to the entire filesystem except Windows system directories
+(Windows\\, Program Files\\, System32\\, SysWOW64\\, AppData\\Local\\Temp, WindowsApps\\).
+Attached folders and files from the user are always in scope.
 
 Each response must be pure JSON — no prose, no markdown fences, one of:
 
@@ -1538,13 +1986,85 @@ When Loaded Skills appear in your context above, read them and follow their proc
 - Be surgical. Never touch files unrelated to the problem.
 - When the problem is fully resolved or the question is answered, declare done.`;
 
+// OPS mode orchestrator prompt — personal assistant with full tool suite
+const CLAUDE_OPS_SYSTEM = `You are Maverick's personal operations assistant for Maverick Integrations.
+You orchestrate tasks in an agentic loop — you decide one action at a time, see the result, then decide the next.
+This is an INTERNAL protocol. Your JSON directives are NEVER shown to the user. The user only sees your final answer or summary.
+
+Output pure JSON — one directive per response, no prose, no markdown fences:
+
+Standard tools:
+{"task":{"tool":"list_dir","path":"C:\\\\Workspace\\\\MyProject"}}
+{"task":{"tool":"read_file","path":"C:\\\\Workspace\\\\docs\\\\notes.md"}}
+{"task":{"tool":"write_file","path":"C:\\\\Workspace\\\\agents\\\\monitor.md","instruction":"Write a complete agent definition file with the following content..."}}
+{"task":{"tool":"run_command","command":"python scripts\\\\process.py"}}
+{"task":{"tool":"fetch_url","url":"https://example.com/api/data"}}
+{"task":{"tool":"web_search","query":"best practices for invoice tracking"}}
+
+Document tools:
+{"task":{"tool":"read_docx","path":"C:\\\\Workspace\\\\Proposals\\\\quote.docx"}}
+{"task":{"tool":"read_pdf","path":"C:\\\\Workspace\\\\Contracts\\\\agreement.pdf"}}
+{"task":{"tool":"read_xlsx","path":"C:\\\\Workspace\\\\Reports\\\\jobs.xlsx","sheet":"Sheet1"}}
+{"task":{"tool":"write_xlsx","path":"C:\\\\Workspace\\\\Reports\\\\monthly.xlsx","sheets":[{"name":"Jobs","headers":["Date","Client","Amount"],"rows":[["2025-01-15","Acme Corp","1200"]]}]}}
+{"task":{"tool":"write_csv","path":"C:\\\\Workspace\\\\exports\\\\data.csv","headers":["Name","Value"],"rows":[["item1","100"]]}}
+{"task":{"tool":"read_csv","path":"C:\\\\Workspace\\\\data\\\\records.csv"}}
+
+Email tools (requires EMAIL_IMAP_HOST and EMAIL_SMTP_HOST in .env):
+{"task":{"tool":"list_emails","mailbox":"INBOX","limit":20}}
+{"task":{"tool":"search_emails","query":"invoice overdue","limit":10}}
+{"task":{"tool":"read_email","uid":"12345"}}
+{"task":{"tool":"send_email","to":"client@example.com","subject":"Follow-up on Proposal","body":"Hi,\\n\\nJust following up...\\n\\nBest,\\nMaverick Integrations"}}
+{"task":{"tool":"create_draft","to":"partner@example.com","subject":"Meeting Tomorrow","body":"Hi,\\n\\nAre you available..."}}
+{"task":{"tool":"label_email","uid":"12345","label":"Invoices"}}
+
+File management:
+{"task":{"tool":"move_file","from":"C:\\\\Workspace\\\\old.txt","to":"C:\\\\Workspace\\\\archive\\\\old.txt"}}
+{"task":{"tool":"copy_file","from":"C:\\\\Workspace\\\\template.docx","to":"C:\\\\Workspace\\\\Projects\\\\NewProject\\\\proposal.docx"}}
+{"task":{"tool":"delete_file","path":"C:\\\\Workspace\\\\temp\\\\scratch.txt"}}
+
+Analysis:
+{"task":{"tool":"analyze_image","path":"C:\\\\Workspace\\\\photos\\\\site.jpg"}}
+
+Agent & skill creation:
+{"task":{"tool":"create_agent","path":"C:\\\\Workspace\\\\agents\\\\invoice-monitor.md","content":"# Agent: Invoice Monitor\\n\\n## Purpose\\nMonitor inbox for invoices..."}}
+{"task":{"tool":"create_skill","path":"${skillsPath}\\\\write-proposal.md","content":"# Skill: Write Proposal\\n\\n## Trigger\\nUser asks to create or draft a proposal..."}}
+{"task":{"tool":"deploy_pm2","script":"C:\\\\Workspace\\\\agents\\\\invoice-monitor.mjs","name":"invoice-monitor","cwd":"C:\\\\Workspace\\\\agents"}}
+
+Control flow:
+{"clarify":"Which folder should I save the report to?"}
+{"done":true,"answer":"Here is the summary of your inbox: ..."}
+{"done":true,"summary":"Created spreadsheet with 42 rows at C:\\\\Workspace\\\\Reports\\\\monthly.xlsx and sent follow-up email to 3 clients."}
+
+## Agent Creation Protocol
+1. If purpose, trigger, or save location is unclear — clarify first
+2. Propose full .md content via done+answer — do NOT write yet
+3. When user confirms → use create_agent tool to write the file (staged for APPLY)
+
+Agent format:
+# Agent: [Name]
+## Purpose / ## Trigger / ## Instructions (numbered) / ## Tools / ## Output / ## Schedule (if recurring)
+
+## Skill Creation Protocol
+1. Skills auto-load on every BUILD/OPS session from the skills/ folder
+2. Propose skill content via done+answer first, then write on confirmation
+3. Use create_skill tool pointing to ${skillsPath}
+
+## General Rules
+- One task per response. Wait for the result before the next.
+- Use absolute paths always.
+- Always read_file or read_docx/read_pdf before writing or editing documents.
+- For emails: list_emails or search_emails first to find UIDs, then read_email for full content.
+- Never delete files without first asking via clarify — use delete_file only after confirmation.
+- When done, declare done with a clear summary of what was accomplished.`;
+
 function buildChatSseWrite(res, event) {
   res.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 
-async function callGpt4o(messages, signal) {
+async function callGpt4o(messages, signal, systemPrompt) {
+  const sys = systemPrompt || CLAUDE_ARCHITECT_SYSTEM;
   const gptMessages = [
-    { role: 'system', content: CLAUDE_ARCHITECT_SYSTEM },
+    { role: 'system', content: sys },
     ...messages
   ];
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1561,9 +2081,10 @@ async function callGpt4o(messages, signal) {
   return JSON.parse(match[0]);
 }
 
-async function callClaude(messages, signal) {
+async function callClaude(messages, signal, systemPrompt) {
+  const sys = systemPrompt || CLAUDE_ARCHITECT_SYSTEM;
   const hasKey = anthropicApiKey && anthropicApiKey.length >= 10 && anthropicApiKey.startsWith('sk-ant');
-  if (!hasKey) return callGpt4o(messages, signal);
+  if (!hasKey) return callGpt4o(messages, signal, sys);
 
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -1576,7 +2097,7 @@ async function callClaude(messages, signal) {
       },
       body: JSON.stringify({
         model: anthropicModel,
-        system: CLAUDE_ARCHITECT_SYSTEM,
+        system: sys,
         messages,
         max_tokens: 1024,
         temperature: 0.2
@@ -1585,7 +2106,7 @@ async function callClaude(messages, signal) {
     if (!r.ok) {
       const errText = await r.text().catch(() => '');
       console.warn(`[planner] Claude ${r.status} — falling back to GPT-4o: ${errText.slice(0, 120)}`);
-      return callGpt4o(messages, signal);
+      return callGpt4o(messages, signal, sys);
     }
     const payload = await r.json();
     const text = payload.content?.[0]?.text?.trim() || '';
@@ -1595,7 +2116,7 @@ async function callClaude(messages, signal) {
   } catch (err) {
     if (err.name === 'AbortError') throw err;
     console.warn(`[planner] Claude error — falling back to GPT-4o: ${err.message}`);
-    return callGpt4o(messages, signal);
+    return callGpt4o(messages, signal, sys);
   }
 }
 
@@ -1678,7 +2199,7 @@ async function handleBuildChat(req, res) {
     else blockedPaths.push(a.path);
   }
   if (blockedPaths.length) {
-    buildChatSseWrite(res, { type: 'warning', text: `⚠ ${blockedPaths.length} attachment(s) outside allowed roots were skipped: ${blockedPaths.join(', ')}. Add the parent folder to MAV_EXTRA_ROOTS in .env to allow it.` });
+    buildChatSseWrite(res, { type: 'warning', text: `⚠ ${blockedPaths.length} attachment(s) could not be resolved: ${blockedPaths.join(', ')}` });
   }
 
   let treeContext = '';
@@ -1891,7 +2412,83 @@ async function handleChat(req, res) {
       return;
     }
 
-    // ASK + REVIEW → Gemini Flash (if key set), OPS → local Qwen
+    // OPS → Claude orchestrator → ops tool executor
+    if (mode === 'ops') {
+      await handleOpsOrchestration(res, controller, prompt.trim(), histMsgs, ctxBlock, attachBlock, folderPaths);
+      return;
+    }
+
+    // ASK → RAG first (12s timeout), Qwen fallback for general questions
+    if (mode === 'ask') {
+      let ragOk = false;
+      try {
+        const ragCtrl = new AbortController();
+        const ragTimeout = setTimeout(() => ragCtrl.abort(), 12_000);
+        const ragResp = await fetch(new URL('/estimate', ragUrl), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          signal: ragCtrl.signal,
+          body: JSON.stringify({ message: prompt.trim(), history: histMsgs, top_k: 12 })
+        });
+        clearTimeout(ragTimeout);
+        if (ragResp.ok) {
+          const ragData = await ragResp.json();
+          const reply = (ragData.reply || '').trim();
+          if (reply) {
+            ragOk = true;
+            sseWrite(res, reply);
+            if (Array.isArray(ragData.sources) && ragData.sources.length) {
+              const srcList = ragData.sources.slice(0, 4).map(s => s.title || s.id || String(s)).join(', ');
+              sseWrite(res, `\n\n---\n*Sources: ${srcList}*`);
+            }
+          }
+        }
+      } catch { /* RAG offline or timed out — fall through */ }
+
+      if (!ragOk) {
+        // Qwen fallback: answer general questions with dashboard context
+        const msgs = [
+          { role: 'system', content: system + attachBlock },
+          ...histMsgs,
+          { role: 'user', content: prompt.trim() }
+        ];
+        try {
+          const upstream = await fetch(new URL('/v1/chat/completions', llamaServerUrl), {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+            body: JSON.stringify({ model: localModel, messages: msgs, stream: true, temperature: 0.7, max_tokens: 1400 })
+          });
+          if (upstream.ok) {
+            const reader = upstream.body.getReader();
+            const decoder = new TextDecoder();
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (!res.writable) break;
+                res.write(decoder.decode(value, { stream: true }));
+              }
+            } finally {
+              reader.releaseLock();
+            }
+          } else {
+            sseWrite(res, '[RAG offline and local model unavailable — please try again]');
+            recordChatFailure('ask', prompt, `RAG offline, Qwen ${upstream.status}`);
+          }
+        } catch (qErr) {
+          if (qErr.name !== 'AbortError') {
+            sseWrite(res, `[Error: ${qErr.message}]`);
+            recordChatFailure('ask', prompt, qErr);
+          }
+        }
+      }
+
+      if (res.writable) { res.write('data: [DONE]\n\n'); res.end(); }
+      return;
+    }
+
+    // REVIEW → Gemini Flash (if key set), otherwise Qwen
     const useGemini = GEMINI_MODES.has(mode) && geminiApiKey;
     const messages = [
       { role: 'system', content: system + attachBlock },
@@ -1949,6 +2546,7 @@ async function handleChat(req, res) {
     }
   } catch (error) {
     if (error.name !== 'AbortError') {
+      recordChatFailure(mode || 'ask', prompt || '', error);
       try {
         res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
         res.write('data: [DONE]\n\n');

@@ -1911,12 +1911,10 @@ function HomePage({ modelStatus }) {
 }
 
 const WORKFLOW_MODES = [
-  { id: 'ask',   label: 'ASK MAVERICK',  accent: 'cyan',  tooltip: 'Ask questions, request research, or check system status' },
-  { id: 'build', label: 'BUILD / FIX',   accent: 'amber', tooltip: 'Generate code, fix bugs, or build features with file context' },
-  { id: 'ops',   label: 'OPERATIONS',    accent: 'green', tooltip: 'Trigger pipelines, run agents, manage automation workflows' },
+  { id: 'ask',   label: 'ASK MAVERICK',  accent: 'cyan',  tooltip: 'Ask business questions — queries Proxmox RAG knowledge base, falls back to Qwen for general questions when RAG is offline' },
+  { id: 'build', label: 'BUILD / FIX',   accent: 'amber', tooltip: 'Claude plans, Qwen executes — full filesystem access, build or edit any file on any drive' },
+  { id: 'ops',   label: 'OPERATIONS',    accent: 'green', tooltip: 'Personal assistant — read emails, Word/PDF docs, build spreadsheets, send emails, create agents and skills' },
 ];
-
-const MAV_RAG_URL = api('/api/rag');
 
 function App() {
 
@@ -1935,7 +1933,6 @@ function App() {
   const [chatPanelOpen, setChatPanelOpen] = useState(false);
   const [chatExpanded, setChatExpanded] = useState(false);
   const chatAbortRef = useRef(null);
-  const maverickHistoryRef = useRef([]);
   const [previewContent, setPreviewContent] = useState(null);
   const [attachedFiles, setAttachedFiles] = useState([]);
   const barFileInputRef = useRef(null);
@@ -1963,45 +1960,17 @@ function App() {
     const controller = new AbortController();
     chatAbortRef.current = controller;
 
-    if (workflowMode === 'ask') {
-      try {
-        const history = maverickHistoryRef.current;
-        const res = await fetch(MAV_RAG_URL, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ message: userMsg, history, top_k: 12 }),
-          signal: controller.signal,
-        });
-        if (!res.ok) throw new Error(`RAG API ${res.status}`);
-        const data = await res.json();
-        const reply = data.reply || '[No response]';
-        maverickHistoryRef.current = [...history, { role: 'user', content: userMsg }, { role: 'assistant', content: reply }];
-        pushChat(prev => {
-          const next = [...prev];
-          next[next.length - 1] = { role: 'assistant', content: reply };
-          return next;
-        });
-        if (isDocumentResponse(reply)) setPreviewContent(reply);
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          pushChat(prev => {
-            const next = [...prev];
-            next[next.length - 1] = { role: 'assistant', content: `[Error: ${err.message}]` };
-            return next;
-          });
-        }
-      } finally {
-        setChatBusy(false);
-        chatAbortRef.current = null;
-      }
-      return;
-    }
-
     let accum = '';
     if (workflowMode === 'build') {
       pushChat(prev => {
         const next = [...prev];
         next[next.length - 1] = { role: 'assistant', content: '⟳ Claude director is planning — this takes 10–20s...' };
+        return next;
+      });
+    } else if (workflowMode === 'ops') {
+      pushChat(prev => {
+        const next = [...prev];
+        next[next.length - 1] = { role: 'assistant', content: '⟳ Maverick OPS is working on it...' };
         return next;
       });
     }
@@ -2085,7 +2054,7 @@ function App() {
               onSubmit: handleChatSubmit,
               onCollapse: () => setChatExpanded(false),
               onStop: () => chatAbortRef.current?.abort(),
-              onClear: () => { pushChat([]); maverickHistoryRef.current = []; setPreviewContent(null); setAttachedFiles([]); },
+              onClear: () => { pushChat([]); setPreviewContent(null); setAttachedFiles([]); },
               workflowMode,
               setWorkflowMode,
               attachedFiles,
@@ -2202,7 +2171,7 @@ function App() {
               </button>
             )}
             {chatHistory.length > 0 && !chatBusy && (
-              <button type="button" className="clearChatBtn" onClick={() => { pushChat([]); maverickHistoryRef.current = []; setPreviewContent(null); setAttachedFiles([]); }}>CLR</button>
+              <button type="button" className="clearChatBtn" onClick={() => { pushChat([]); setPreviewContent(null); setAttachedFiles([]); }}>CLR</button>
             )}
           </form>
         </div>}
