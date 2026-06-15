@@ -1038,25 +1038,47 @@ function loadSkills() {
 
 function workspaceTree() {
   const lines = [];
-  const skip = new Set(['node_modules', '.git', 'dist', 'tmp', '.mav-console', '.venv', '__pycache__']);
+  const skip = new Set(['node_modules', '.git', 'dist', 'tmp', '.mav-console', '.venv', '__pycache__', '$Recycle.Bin', 'System Volume Information']);
   const walk = (dir, prefix, depth, maxDepth) => {
-    if (depth > maxDepth || lines.length >= 120) return;
+    if (depth > maxDepth || lines.length >= 200) return;
     let entries = [];
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
-      if (skip.has(e.name) || e.name.startsWith('.') || lines.length >= 120) continue;
+      if (skip.has(e.name) || e.name.startsWith('.') || lines.length >= 200) continue;
       lines.push(prefix + e.name + (e.isDirectory() ? '/' : ''));
       if (e.isDirectory()) walk(path.join(dir, e.name), prefix + e.name + '/', depth + 1, maxDepth);
     }
   };
+
   // MCC project — deep
   lines.push(`[MCC] ${workspacePath}`);
   walk(workspacePath, '  ', 0, 3);
+
   // Skills dir — shallow
   if (skillsPath !== workspacePath && fs.existsSync(skillsPath)) {
     lines.push(`\n[SKILLS] ${skillsPath}`);
     walk(skillsPath, '  ', 0, 1);
   }
+
+  // Parent dir — show sibling projects so Claude can navigate beyond MCC
+  const parentDir = path.dirname(workspacePath);
+  if (parentDir !== workspacePath && fs.existsSync(parentDir)) {
+    lines.push(`\n[WORKSPACE ROOT] ${parentDir}`);
+    walk(parentDir, '  ', 0, 1);
+  }
+
+  // Other drive roots on Windows — list top-level dirs so Claude knows what drives exist
+  if (process.platform === 'win32') {
+    const workspaceDriveRoot = path.parse(workspacePath).root;
+    for (const drive of ['C:\\', 'D:\\', 'E:\\', 'F:\\']) {
+      if (drive.toLowerCase() === workspaceDriveRoot.toLowerCase()) continue;
+      if (fs.existsSync(drive)) {
+        lines.push(`\n[DRIVE] ${drive}`);
+        walk(drive, '  ', 0, 1);
+      }
+    }
+  }
+
   return lines.join('\n');
 }
 
@@ -1891,11 +1913,16 @@ You have read/write access to the entire filesystem except Windows system direct
 (Windows\\, Program Files\\, System32\\, SysWOW64\\, AppData\\Local\\Temp, WindowsApps\\).
 Attached folders and files from the user are always in scope.
 
+The workspace tree below shows your current project and nearby directories. Use list_dir to explore
+any path not listed — you have full access to navigate anywhere on any drive.
+To discover what's available: {"task":{"tool":"list_dir","path":"C:\\\\"}} or {"task":{"tool":"list_dir","path":"D:\\\\"}}
+
 Each response must be pure JSON — no prose, no markdown fences, one of:
 
 Delegate a task:
 {"task":{"tool":"read_file","path":"C:\\\\Workspace\\\\MyProject\\\\file.js"}}
 {"task":{"tool":"list_dir","path":"C:\\\\Workspace\\\\MyProject"}}
+{"task":{"tool":"list_dir","path":"D:\\\\"}}
 {"task":{"tool":"run_command","command":"node --check server.mjs"}}
 {"task":{"tool":"write_file","path":"C:\\\\Workspace\\\\MyProject\\\\file.js","instruction":"Exact description: which function, what to add/change/remove, and where. Be specific enough that a junior dev could do it mechanically."}}
 
