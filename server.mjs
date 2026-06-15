@@ -2558,6 +2558,7 @@ async function handleChat(req, res) {
 
 const ALLOWED_ORIGINS = [
   'https://homelab-noc-dashboard.vercel.app',
+  'https://carterspc.tailf72e3f.ts.net',
   'http://localhost:5173',
   'http://localhost:3011',
 ];
@@ -2565,9 +2566,9 @@ const ALLOWED_ORIGINS = [
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
-  // CORS — allow Vercel frontend and local dev
+  // CORS — allow Vercel frontend, Tailscale Funnel, and local dev
   const origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.vercel.app')) {
+  if (ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.ts.net')) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
