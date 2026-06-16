@@ -2,107 +2,31 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import {
+  rootDir, distDir, port, deployStartedAt,
+  prometheusUrl, ragUrl, llamaServerUrl, localModel, repoBridgeUrl,
+  geminiApiKey, geminiModel, GEMINI_MODES,
+  openAiApiKey, nimApiKey, nimModel, nimQcModel,
+  anthropicApiKey, anthropicModel, braveApiKey,
+  dataDir, ledgerFile, workspacePath, memoryPath, skillsPath,
+  stagingRoot, backupRoot, BLOCKED_ABS_RE, ALLOWED_ORIGINS, MIME_TYPES
+} from './server/config.mjs';
+import { send, sendJson, readJsonBody, applyCors } from './server/http.mjs';
+import {
+  orchestratorState, ensureDataDir, readLedger, writeLedger, addLedgerRun, updateLedgerRun
+} from './server/services/taskLedger.mjs';
+import {
+  getSeoWorkflowStatus, callRepoBridge, proxySeoActions
+} from './server/services/repoBridgeClient.mjs';
+import { runPiChat } from './server/services/piClient.mjs';
+import { getMemoryIndex } from './server/services/memory.mjs';
+import { CLAUDE_ARCHITECT_SYSTEM, CLAUDE_OPS_SYSTEM } from './server/services/systemPrompts.mjs';
+import { resolveSafePath, EXEC_TOOLS, runExecTool, runOpsExecTool } from './server/services/execTools.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const distDir = path.join(__dirname, 'dist');
-const port = Number(process.env.PORT || 3011);
-const deployStartedAt = new Date().toISOString();
-const prometheusUrl = process.env.PROMETHEUS_URL || 'http://192.168.1.12:9090';
-const ragUrl = process.env.MAV_RAG_URL || 'http://192.168.1.12:8181';
-const llamaServerUrl = process.env.LLAMA_SERVER_URL || 'http://127.0.0.1:8080';
-const localModel = process.env.LOCAL_MODEL || 'qwen3-14b';
-const repoBridgeUrl = process.env.MAV_REPO_BRIDGE_URL || '';
-const geminiApiKey = process.env.GEMINI_API_KEY || '';
-const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-const GEMINI_MODES = new Set(['review']); // Gemini = everyday chat only (REVIEW mode)
-const openAiApiKey = process.env.OPENAI_API_KEY || '';
-const nimApiKey = process.env.NVIDIA_NIM_API_KEY || '';
-// qwen2.5-coder-32b retired (410), qwen3.5-122b-a10b too slow (60s timeout) — llama-3.3-70b for main tasks
-const nimModel = process.env.NIM_MODEL || 'meta/llama-3.3-70b-instruct';
-// QC uses a fast 8B model — "SHIP or HOLD" doesn't need a 70B model
-const nimQcModel = process.env.NIM_QC_MODEL || 'meta/llama-3.1-8b-instruct';
-const anthropicApiKey = process.env.ANTHROPIC_API_KEY || '';
-const anthropicModel = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
-// Brave Search — free tier 2k queries/month: brave.com/search/api/
-// TODO: Add BRAVE_SEARCH_API_KEY to .env once you get the key
-const braveApiKey = process.env.BRAVE_SEARCH_API_KEY || '';
-const dataDir = process.env.MAV_CONSOLE_DATA_DIR || path.join(__dirname, '.mav-console');
-const ledgerFile = path.join(dataDir, 'task-runs.json');
-const workspacePath = process.env.MAV_CONSOLE_WORKSPACE || __dirname;
-const memoryPath = process.env.MAV_MEMORY_PATH || 'C:\\Users\\carte\\.claude\\projects\\memory';
-const skillsPath = process.env.MAV_SKILLS_PATH || path.join(__dirname, 'skills');
 
-// Blocked system and sensitive paths — everything else is accessible.
-// MAV_EXTRA_ROOTS is kept for backward compat but no longer needed for access control.
-const BLOCKED_ABS_RE = /[/\\](\.env$|\.git[/\\]|Windows[/\\]|Program Files[/\\]?|AppData[/\\]Local[/\\]Temp|System32[/\\]|SysWOW64[/\\]|WindowsApps[/\\])/i;
-
-const orchestratorState = {
-  updatedAt: null,
-  runs: []
-};
-
-const types = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg'
-};
-
-function send(res, status, body, contentType = 'text/plain; charset=utf-8') {
-  res.writeHead(status, { 'content-type': contentType, 'cache-control': 'no-store' });
-  res.end(body);
-}
-
-function sendJson(res, status, payload) {
-  send(res, status, JSON.stringify(payload), 'application/json; charset=utf-8');
-}
-
-function ensureDataDir() {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-function readLedger() {
-  try {
-    ensureDataDir();
-    if (!fs.existsSync(ledgerFile)) return [];
-    const parsed = JSON.parse(fs.readFileSync(ledgerFile, 'utf8'));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error(`Failed to read task ledger: ${error.message}`);
-    return [];
-  }
-}
-
-function writeLedger(runs) {
-  ensureDataDir();
-  fs.writeFileSync(ledgerFile, JSON.stringify(runs.slice(0, 100), null, 2));
-}
-
-function addLedgerRun(run) {
-  const runs = [run, ...readLedger().filter((item) => item.id !== run.id)].slice(0, 100);
-  writeLedger(runs);
-  orchestratorState.updatedAt = run.updatedAt || run.finishedAt || run.startedAt || new Date().toISOString();
-  return run;
-}
-
-function updateLedgerRun(id, patch) {
-  const runs = readLedger();
-  const index = runs.findIndex((run) => run.id === id);
-  if (index === -1) return null;
-  const updated = { ...runs[index], ...patch, updatedAt: new Date().toISOString() };
-  runs[index] = updated;
-  writeLedger(runs);
-  orchestratorState.updatedAt = updated.updatedAt;
-  return updated;
-}
 
 function triggerSelfImprove() {
-  const scriptPath = path.join(__dirname, 'scripts', 'qwen-self-improve.mjs');
+  const scriptPath = path.join(rootDir, 'scripts', 'qwen-self-improve.mjs');
   const child = spawn(process.execPath, [scriptPath], {
     detached: true,
     stdio: 'ignore',
@@ -130,237 +54,6 @@ function recordChatFailure(mode, prompt, error) {
   } catch {}
 }
 
-function parseMemoryFrontmatter(text) {
-  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return null;
-  const frontmatter = match[1];
-  const body = match[2].trim();
-  const metadata = {};
-  let inMetadata = false;
-  const parsed = {};
-  for (const rawLine of frontmatter.split(/\r?\n/)) {
-    const line = rawLine.trimEnd();
-    if (!line.trim()) continue;
-    if (line.trim() === 'metadata:') {
-      inMetadata = true;
-      continue;
-    }
-    const keyValue = line.match(/^\s*([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (!keyValue) continue;
-    const [, key, rawValue] = keyValue;
-    const value = rawValue.replace(/^["']|["']$/g, '');
-    if (inMetadata && rawLine.startsWith('  ')) {
-      metadata[key] = value;
-    } else {
-      inMetadata = false;
-      parsed[key] = value;
-    }
-  }
-  return { ...parsed, metadata, body };
-}
-
-function redactMemoryBody(body) {
-  return body
-    .replace(/(?:ssh|api[_ -]?key|private[_ -]?key|token|secret|credential|password|root|id_ed25519)[^\r\n]*/gi, '[redacted sensitive reference]')
-    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[redacted ip]');
-}
-
-function loadMemoryIndex() {
-  if (!fs.existsSync(memoryPath)) {
-    return {
-      sourcePath: memoryPath,
-      state: 'missing',
-      memories: [],
-      warnings: [`Memory path not found: ${memoryPath}`],
-      updatedAt: new Date().toISOString()
-    };
-  }
-
-  const warnings = [];
-  const files = fs.readdirSync(memoryPath)
-    .filter((file) => file.toLowerCase().endsWith('.md') && file.toLowerCase() !== 'memory.md')
-    .sort();
-  const memories = files.flatMap((file) => {
-    const sourcePath = path.join(memoryPath, file);
-    try {
-      const parsed = parseMemoryFrontmatter(fs.readFileSync(sourcePath, 'utf8'));
-      if (!parsed?.name) {
-        warnings.push(`Skipped ${file}: missing frontmatter name.`);
-        return [];
-      }
-      const related = [...parsed.body.matchAll(/\[\[([^\]]+)\]\]/g)].map((match) => match[1]);
-      const stat = fs.statSync(sourcePath);
-      return [{
-        id: parsed.name,
-        description: parsed.description || '',
-        type: parsed.metadata?.type || 'unknown',
-        nodeType: parsed.metadata?.node_type || 'memory',
-        originSessionId: parsed.metadata?.originSessionId || null,
-        related,
-        body: redactMemoryBody(parsed.body),
-        sourcePath,
-        updatedAt: stat.mtime.toISOString()
-      }];
-    } catch (error) {
-      warnings.push(`Skipped ${file}: ${error.message}`);
-      return [];
-    }
-  });
-  const typeCounts = memories.reduce((counts, memory) => {
-    counts[memory.type] = (counts[memory.type] || 0) + 1;
-    return counts;
-  }, {});
-  return {
-    sourcePath: memoryPath,
-    state: 'online',
-    count: memories.length,
-    typeCounts,
-    memories,
-    warnings,
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function searchMemory(query) {
-  const index = loadMemoryIndex();
-  const terms = String(query || '').toLowerCase().split(/\s+/).filter((term) => term.length > 2);
-  if (!terms.length) return { ...index, results: index.memories.slice(0, 8) };
-  const scored = index.memories.map((memory) => {
-    const haystack = `${memory.id} ${memory.description} ${memory.type} ${memory.body}`.toLowerCase();
-    const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
-    return { ...memory, score };
-  }).filter((memory) => memory.score > 0);
-  scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-  return { ...index, results: scored.slice(0, 8) };
-}
-
-async function getMemoryIndex(query = '') {
-  const local = query ? searchMemory(query) : loadMemoryIndex();
-  if (local.state === 'online' || !repoBridgeUrl) return local;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3500);
-  try {
-    const upstream = new URL('/memory', repoBridgeUrl);
-    if (query) upstream.searchParams.set('query', query);
-    const response = await fetch(upstream, {
-      signal: controller.signal,
-      headers: { accept: 'application/json' }
-    });
-    const payload = await response.json();
-    return {
-      ...payload,
-      source: 'repo-bridge',
-      localWarning: local.warnings?.[0] || null
-    };
-  } catch (error) {
-    return {
-      ...local,
-      source: 'local',
-      warnings: [...(local.warnings || []), error.name === 'AbortError' ? 'Repo bridge memory timed out' : error.message]
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function getSeoWorkflowStatus() {
-  if (!repoBridgeUrl) {
-    return {
-      state: 'not-configured',
-      reports: [],
-      faults: ['Repo bridge is not configured.'],
-      updatedAt: new Date().toISOString()
-    };
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3500);
-  try {
-    const response = await fetch(new URL('/seo/status', repoBridgeUrl), {
-      signal: controller.signal,
-      headers: { accept: 'application/json' }
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.error || `SEO workflow failed: ${response.status}`);
-    }
-    return { ...payload, source: 'repo-bridge' };
-  } catch (error) {
-    return {
-      state: 'error',
-      source: 'repo-bridge',
-      reports: [],
-      faults: [error.name === 'AbortError' ? 'SEO workflow query timed out' : error.message],
-      updatedAt: new Date().toISOString()
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function callRepoBridge(pathname, { method = 'GET', body = null, timeoutMs = 180_000 } = {}) {
-  if (!repoBridgeUrl) {
-    throw new Error('Repo bridge is not configured.');
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(new URL(pathname, repoBridgeUrl), {
-      method,
-      signal: controller.signal,
-      headers: {
-        accept: 'application/json',
-        ...(body ? { 'content-type': 'application/json' } : {})
-      },
-      body: body ? JSON.stringify(body) : null
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.error || `Repo bridge failed: ${response.status}`);
-    }
-    return { ...payload, source: 'repo-bridge' };
-  } catch (error) {
-    throw new Error(error.name === 'AbortError' ? 'Repo bridge action timed out' : error.message);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function proxySeoActions(req, res, action) {
-  try {
-    if (action === 'list') {
-      sendJson(res, 200, await callRepoBridge('/seo/actions', { timeoutMs: 180_000 }));
-      return;
-    }
-    const payload = await readJsonBody(req);
-    if (action === 'approve') {
-      sendJson(res, 200, await callRepoBridge('/seo/actions/approve', {
-        method: 'POST',
-        body: payload,
-        timeoutMs: 180_000
-      }));
-      return;
-    }
-    if (action === 'run') {
-      sendJson(res, 200, await callRepoBridge('/seo/actions/run', {
-        method: 'POST',
-        body: payload,
-        timeoutMs: 600_000
-      }));
-    }
-  } catch (error) {
-    sendJson(res, 500, { error: error.message, source: 'repo-bridge' });
-  }
-}
-
-async function readJsonBody(req) {
-  let body = '';
-  for await (const chunk of req) {
-    body += chunk;
-    if (body.length > 512_000) throw new Error('Request body too large');
-  }
-  return body ? JSON.parse(body) : {};
-}
 
 function textFromLlamaResponse(payload) {
   if (typeof payload?.output_text === 'string') return payload.output_text;
@@ -1000,30 +693,6 @@ async function streamUpstream(upstream, onToken) {
 
 // ---------- BUILD pipeline: staged file changes + executor tools ----------
 
-const stagingRoot = path.join(__dirname, 'tmp', 'build-staging');
-const backupRoot = path.join(__dirname, 'tmp', 'build-backup');
-const BLOCKED_REL = /^(\.env$|\.git(\/|$)|node_modules(\/|$)|package-lock\.json$|tmp(\/|$)|\.mav-console(\/|$))/i;
-
-// Resolve a path that may be absolute or relative.
-// Returns the normalized absolute path if allowed, or null if blocked.
-function resolveSafePath(p) {
-  if (!p || typeof p !== 'string') return null;
-  const trimmed = p.trim();
-  let abs;
-  if (path.isAbsolute(trimmed)) {
-    abs = path.normalize(trimmed);
-  } else {
-    // Strip leading slashes/dots for relative paths
-    const rel = path.normalize(trimmed.replace(/^[/\\]+/, ''));
-    if (rel.split(/[/\\]/).includes('..')) return null;
-    if (BLOCKED_REL.test(rel.replace(/\\/g, '/'))) return null;
-    abs = path.join(workspacePath, rel);
-  }
-  // Block Windows system and sensitive directories only
-  if (BLOCKED_ABS_RE.test(abs)) return null;
-  return abs;
-}
-
 function loadSkills() {
   try {
     if (!fs.existsSync(skillsPath)) return '';
@@ -1082,467 +751,12 @@ function workspaceTree() {
   return lines.join('\n');
 }
 
-const EXEC_TOOLS = [
-  { type: 'function', function: { name: 'list_dir', description: 'List files in a directory. Accepts absolute paths (e.g. C:\\Workspace\\MyProject) or relative paths from the MCC root. Directories end with /.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute or relative directory path.' } }, required: [] } } },
-  { type: 'function', function: { name: 'read_file', description: 'Read a text file. Accepts absolute or relative paths. Returns up to 6000 characters; use offset to page through large files.', parameters: { type: 'object', properties: { path: { type: 'string' }, offset: { type: 'number' } }, required: ['path'] } } },
-  { type: 'function', function: { name: 'write_file', description: 'Stage a file for human review — nothing is written until the user clicks APPLY. Content must be the complete file, never a partial snippet. Accepts absolute or relative paths.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
-  { type: 'function', function: { name: 'run_command', description: 'Run a command in the MCC workspace. No shell operators (| ; && > etc). Useful for: node, npm, npx, git, pm2 list/logs/status, python, dir.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
-  { type: 'function', function: { name: 'fetch_url', description: 'Fetch the content of any public URL and return it as plain text. Strips HTML tags. Good for reading documentation, API responses, JSON feeds, or checking if a URL is reachable. Returns up to 4000 characters.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'Full URL including https://' } }, required: ['url'] } } },
-  { type: 'function', function: { name: 'web_search', description: 'Search the web using Brave Search API. Returns top 5 results with titles, URLs, and descriptions. Use when you need current information, package docs, error solutions, or anything you cannot find in local files.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' } }, required: ['query'] } } }
-];
-
-const BLOCKED_COMMANDS = /(\brmdir\b|\bdel\b|\brd\b|\brm\b|\bformat\b|\bregdel\b|\bpowershell.*-enc\b|\bcurl.*\|\s*bash\b)/i;
-const SAFE_COMMAND = /^(node|npm|npx|git|pm2|python|python3|dir|type|where|echo|ping|tracert|nslookup|ipconfig)\b/i;
-
-function runShellCommand(command) {
-  return new Promise((resolve) => {
-    const child = spawn('cmd.exe', ['/d', '/s', '/c', command], { cwd: workspacePath });
-    let out = '';
-    let killed = false;
-    const timer = setTimeout(() => { killed = true; child.kill(); }, 120_000);
-    child.stdout.on('data', (d) => { if (out.length < 8000) out += d; });
-    child.stderr.on('data', (d) => { if (out.length < 8000) out += d; });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve(`exit code: ${code}${killed ? ' (killed after 120s)' : ''}\n${out.slice(0, 6000) || '(no output)'}`);
-    });
-    child.on('error', (err) => { clearTimeout(timer); resolve(`ERROR: ${err.message}`); });
-  });
-}
-
-async function runExecTool(name, args, staged) {
-  if (name === 'run_command') {
-    const cmd = String(args.command || '').trim();
-    if (/[;&|<>`$^%]/.test(cmd)) return 'ERROR: shell operators are not allowed';
-    if (BLOCKED_COMMANDS.test(cmd)) return 'ERROR: command is blocked for safety.';
-    if (!SAFE_COMMAND.test(cmd)) return 'ERROR: command not recognised. Allowed prefixes: node, npm, npx, git, pm2, python, python3, dir, type, where, echo, ping, tracert, nslookup, ipconfig.';
-    return runShellCommand(cmd);
-  }
-  if (name === 'list_dir') {
-    const abs = resolveSafePath(args.path || '.');
-    if (abs === null) return 'ERROR: path not allowed';
-    try {
-      const entries = fs.readdirSync(abs, { withFileTypes: true });
-      return entries
-        .filter((e) => !['node_modules', '.git', 'dist', 'tmp', '.mav-console'].includes(e.name))
-        .slice(0, 100)
-        .map((e) => e.name + (e.isDirectory() ? '/' : ''))
-        .join('\n') || '(empty)';
-    } catch (error) {
-      return `ERROR: ${error.message}`;
-    }
-  }
-  if (name === 'read_file') {
-    const abs = resolveSafePath(args.path);
-    if (abs === null) return 'ERROR: path not allowed';
-    const stagedFile = staged.files.find((f) => f.path === abs);
-    let text;
-    if (stagedFile) {
-      text = stagedFile.content;
-    } else {
-      try { text = fs.readFileSync(abs, 'utf8'); }
-      catch (error) { return `ERROR: ${error.message}`; }
-    }
-    const offset = Math.max(0, Number(args.offset) || 0);
-    const slice = text.slice(offset, offset + 6000);
-    staged.readPaths.add(abs);
-    return text.length > offset + 6000
-      ? `${slice}\n...[truncated, file is ${text.length} chars — call read_file with offset=${offset + 6000} for the rest]`
-      : slice;
-  }
-  if (name === 'write_file') {
-    const abs = resolveSafePath(args.path);
-    if (abs === null) return 'ERROR: path not allowed';
-    if (typeof args.content !== 'string' || !args.content.trim()) return 'ERROR: content is required';
-    // Guard against the model replacing a real file with a fragment
-    try {
-      const oldSize = fs.statSync(abs).size;
-      if (oldSize > 400 && args.content.length < oldSize * 0.3) {
-        return `REJECTED: ${abs} is ${oldSize} bytes but your content is only ${args.content.length} chars. write_file requires the COMPLETE updated file — read_file it first, then resubmit the whole file with your change merged in.`;
-      }
-      if (!staged.readPaths.has(abs)) {
-        return `REJECTED: ${abs} already exists — read_file it before writing so your version preserves existing code.`;
-      }
-    } catch {}
-    const index = staged.files.findIndex((f) => f.path === abs);
-    const entry = { path: abs, content: args.content };
-    if (index >= 0) staged.files[index] = entry; else staged.files.push(entry);
-    return `STAGED ${abs} (${args.content.length} chars). It will be applied to the workspace after human review.`;
-  }
-  if (name === 'fetch_url') {
-    const url = String(args.url || '').trim();
-    if (!url.startsWith('http://') && !url.startsWith('https://')) return 'ERROR: URL must start with http:// or https://';
-    try {
-      const r = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickMCC/1.0)' },
-        signal: AbortSignal.timeout(15_000)
-      });
-      if (!r.ok) return `ERROR: HTTP ${r.status} from ${url}`;
-      const ct = r.headers.get('content-type') || '';
-      const raw = await r.text();
-      if (ct.includes('json') || url.endsWith('.json')) return raw.slice(0, 4000);
-      const stripped = raw
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      return stripped.length > 4000 ? stripped.slice(0, 4000) + '\n...[truncated]' : stripped;
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-  if (name === 'web_search') {
-    if (!braveApiKey) return 'ERROR: Web search not configured. Add BRAVE_SEARCH_API_KEY to .env — free key at brave.com/search/api/';
-    const query = String(args.query || '').trim();
-    if (!query) return 'ERROR: query is required';
-    try {
-      const r = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`, {
-        headers: { 'Accept': 'application/json', 'X-Subscription-Token': braveApiKey },
-        signal: AbortSignal.timeout(10_000)
-      });
-      if (!r.ok) return `ERROR: Brave API ${r.status} — ${await r.text().catch(() => '')}`;
-      const data = await r.json();
-      const results = (data.web?.results || []).slice(0, 5)
-        .map((res, i) => `${i + 1}. ${res.title}\n   ${res.url}\n   ${res.description || ''}`)
-        .join('\n\n');
-      return results || 'No results found';
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-  return `ERROR: unknown tool ${name}`;
-}
 
 // Convert an absolute path to a safe relative path for staging storage
 function stagingSlug(p) {
   return p.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
-// OPS-mode executor — handles personal assistant tools not in runExecTool
-async function runOpsExecTool(name, args, staged) {
-  // Document: read Word
-  if (name === 'read_docx') {
-    const abs = resolveSafePath(args.path);
-    if (!abs) return 'ERROR: path not allowed';
-    try {
-      const { default: mammoth } = await import('mammoth');
-      const result = await mammoth.extractRawText({ path: abs });
-      const text = result.value || '';
-      return text.length > 8000 ? text.slice(0, 8000) + '\n...[truncated]' : text || '(empty document)';
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Document: read PDF
-  if (name === 'read_pdf') {
-    const abs = resolveSafePath(args.path);
-    if (!abs) return 'ERROR: path not allowed';
-    try {
-      const { createRequire } = await import('module');
-      const req = createRequire(import.meta.url);
-      const pdfParse = req('pdf-parse');
-      const buf = fs.readFileSync(abs);
-      const data = await pdfParse(buf);
-      const text = data.text || '';
-      return text.length > 8000 ? text.slice(0, 8000) + '\n...[truncated]' : text || '(empty PDF)';
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Document: read Excel
-  if (name === 'read_xlsx') {
-    const abs = resolveSafePath(args.path);
-    if (!abs) return 'ERROR: path not allowed';
-    try {
-      const { default: XLSX } = await import('xlsx');
-      const wb = XLSX.readFile(abs);
-      const sheetName = args.sheet || wb.SheetNames[0];
-      const ws = wb.Sheets[sheetName];
-      if (!ws) return `ERROR: Sheet "${sheetName}" not found. Available: ${wb.SheetNames.join(', ')}`;
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-      const preview = JSON.stringify(rows.slice(0, 50), null, 2);
-      return `Sheet: ${sheetName} (${rows.length} rows)\n${preview}`;
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Document: write Excel
-  if (name === 'write_xlsx') {
-    const abs = resolveSafePath(args.path);
-    if (!abs) return 'ERROR: path not allowed';
-    const sheets = Array.isArray(args.sheets) ? args.sheets : [];
-    if (!sheets.length) return 'ERROR: sheets array required';
-    try {
-      const { default: XLSX } = await import('xlsx');
-      const wb = XLSX.utils.book_new();
-      for (const s of sheets) {
-        const headers = Array.isArray(s.headers) ? s.headers : [];
-        const rows = Array.isArray(s.rows) ? s.rows : [];
-        const wsData = headers.length ? [headers, ...rows] : rows;
-        const ws = XLSX.utils.aoa_to_sheet(wsData);
-        XLSX.utils.book_append_sheet(wb, ws, String(s.name || 'Sheet1').slice(0, 31));
-      }
-      XLSX.writeFile(wb, abs);
-      staged.files.push({ path: abs, content: `[binary xlsx: ${sheets.length} sheet(s)]` });
-      return `CREATED ${abs} with ${sheets.length} sheet(s): ${sheets.map(s => s.name).join(', ')}`;
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Document: write CSV
-  if (name === 'write_csv') {
-    const abs = resolveSafePath(args.path);
-    if (!abs) return 'ERROR: path not allowed';
-    const headers = Array.isArray(args.headers) ? args.headers : [];
-    const rows = Array.isArray(args.rows) ? args.rows : [];
-    try {
-      const escape = (v) => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s; };
-      const lines = [];
-      if (headers.length) lines.push(headers.map(escape).join(','));
-      for (const row of rows) lines.push((Array.isArray(row) ? row : Object.values(row)).map(escape).join(','));
-      const csv = lines.join('\n');
-      fs.mkdirSync(path.dirname(abs), { recursive: true });
-      fs.writeFileSync(abs, csv, 'utf8');
-      staged.files.push({ path: abs, content: csv });
-      return `CREATED ${abs} (${lines.length} rows, ${csv.length} chars). Staged for APPLY.`;
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Document: read CSV
-  if (name === 'read_csv') {
-    const abs = resolveSafePath(args.path);
-    if (!abs) return 'ERROR: path not allowed';
-    try {
-      const text = fs.readFileSync(abs, 'utf8');
-      const lines = text.split(/\r?\n/).filter(l => l.trim());
-      const preview = lines.slice(0, 50).join('\n');
-      return `${lines.length} rows\n${preview}${lines.length > 50 ? '\n...[truncated]' : ''}`;
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Email helpers
-  function getEmailConfig() {
-    const imapHost = process.env.EMAIL_IMAP_HOST;
-    const imapPort = Number(process.env.EMAIL_IMAP_PORT || 993);
-    const imapUser = process.env.EMAIL_IMAP_USER;
-    const imapPass = process.env.EMAIL_IMAP_PASS;
-    const smtpHost = process.env.EMAIL_SMTP_HOST || imapHost?.replace('imap.', 'smtp.');
-    const smtpPort = Number(process.env.EMAIL_SMTP_PORT || 587);
-    const smtpUser = process.env.EMAIL_SMTP_USER || imapUser;
-    const smtpPass = process.env.EMAIL_SMTP_PASS || imapPass;
-    return { imapHost, imapPort, imapUser, imapPass, smtpHost, smtpPort, smtpUser, smtpPass };
-  }
-
-  // Email: list
-  if (name === 'list_emails') {
-    const cfg = getEmailConfig();
-    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured. Add EMAIL_IMAP_HOST, EMAIL_IMAP_USER, EMAIL_IMAP_PASS to .env';
-    const mailbox = String(args.mailbox || 'INBOX');
-    const limit = Math.min(Number(args.limit || 20), 50);
-    try {
-      const { ImapFlow } = await import('imapflow');
-      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
-      await client.connect();
-      const lock = await client.getMailboxLock(mailbox);
-      try {
-        const msgs = [];
-        for await (const msg of client.fetch({ seq: `${Math.max(1, client.mailbox.exists - limit + 1)}:*` }, { envelope: true, uid: true })) {
-          msgs.push({ uid: msg.uid, seq: msg.seq, subject: msg.envelope.subject || '(no subject)', from: msg.envelope.from?.[0]?.address || '', date: msg.envelope.date?.toISOString() || '' });
-        }
-        return JSON.stringify(msgs.reverse(), null, 2);
-      } finally { lock.release(); await client.logout(); }
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Email: read
-  if (name === 'read_email') {
-    const cfg = getEmailConfig();
-    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured.';
-    const uid = String(args.uid || '');
-    if (!uid) return 'ERROR: uid required';
-    try {
-      const { ImapFlow } = await import('imapflow');
-      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
-      await client.connect();
-      const lock = await client.getMailboxLock('INBOX');
-      try {
-        const msg = await client.fetchOne(uid, { envelope: true, bodyStructure: true, source: true }, { uid: true });
-        if (!msg) return `ERROR: Message UID ${uid} not found`;
-        const src = msg.source?.toString('utf8') || '';
-        // Strip base64 attachments, keep headers + text parts
-        const stripped = src.replace(/Content-Transfer-Encoding: base64[\s\S]*?(?=--|\z)/gi, '[attachment]\n').slice(0, 6000);
-        return `From: ${msg.envelope.from?.[0]?.address}\nSubject: ${msg.envelope.subject}\nDate: ${msg.envelope.date}\n\n${stripped}`;
-      } finally { lock.release(); await client.logout(); }
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Email: search
-  if (name === 'search_emails') {
-    const cfg = getEmailConfig();
-    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured.';
-    const query = String(args.query || '').trim();
-    if (!query) return 'ERROR: query required';
-    const limit = Math.min(Number(args.limit || 10), 30);
-    try {
-      const { ImapFlow } = await import('imapflow');
-      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
-      await client.connect();
-      const lock = await client.getMailboxLock('INBOX');
-      try {
-        const uids = await client.search({ or: [{ subject: query }, { from: query }, { body: query }] }, { uid: true });
-        const slice = uids.slice(-limit);
-        const msgs = [];
-        for await (const msg of client.fetch(slice.join(','), { envelope: true, uid: true }, { uid: true })) {
-          msgs.push({ uid: msg.uid, subject: msg.envelope.subject || '(no subject)', from: msg.envelope.from?.[0]?.address || '', date: msg.envelope.date?.toISOString() || '' });
-        }
-        return `Found ${uids.length} messages (showing ${msgs.length}):\n${JSON.stringify(msgs.reverse(), null, 2)}`;
-      } finally { lock.release(); await client.logout(); }
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Email: send
-  if (name === 'send_email') {
-    const cfg = getEmailConfig();
-    if (!cfg.smtpHost || !cfg.smtpUser || !cfg.smtpPass) return 'ERROR: Email not configured. Add EMAIL_SMTP_HOST, EMAIL_SMTP_USER, EMAIL_SMTP_PASS to .env';
-    const to = String(args.to || '').trim();
-    const subject = String(args.subject || '').trim();
-    const body = String(args.body || '').trim();
-    if (!to || !subject || !body) return 'ERROR: to, subject, and body are required';
-    try {
-      const { default: nodemailer } = await import('nodemailer');
-      const transporter = nodemailer.createTransport({ host: cfg.smtpHost, port: cfg.smtpPort, secure: cfg.smtpPort === 465, auth: { user: cfg.smtpUser, pass: cfg.smtpPass } });
-      const info = await transporter.sendMail({ from: cfg.smtpUser, to, cc: args.cc || undefined, subject, text: body });
-      return `Email sent. Message ID: ${info.messageId}`;
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Email: create draft
-  if (name === 'create_draft') {
-    const cfg = getEmailConfig();
-    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured.';
-    const to = String(args.to || '').trim();
-    const subject = String(args.subject || '').trim();
-    const body = String(args.body || '').trim();
-    if (!to || !subject) return 'ERROR: to and subject are required';
-    try {
-      const { ImapFlow } = await import('imapflow');
-      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
-      await client.connect();
-      const raw = `From: ${cfg.imapUser}\r\nTo: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain\r\n\r\n${body}`;
-      await client.append('Drafts', Buffer.from(raw), ['\\Draft']);
-      await client.logout();
-      return `Draft saved to Drafts folder: "${subject}" → ${to}`;
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Email: label/move
-  if (name === 'label_email') {
-    const cfg = getEmailConfig();
-    if (!cfg.imapHost || !cfg.imapUser || !cfg.imapPass) return 'ERROR: Email not configured.';
-    const uid = String(args.uid || '');
-    const label = String(args.label || '').trim();
-    if (!uid || !label) return 'ERROR: uid and label required';
-    try {
-      const { ImapFlow } = await import('imapflow');
-      const client = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: cfg.imapPort === 993, auth: { user: cfg.imapUser, pass: cfg.imapPass }, logger: false });
-      await client.connect();
-      const lock = await client.getMailboxLock('INBOX');
-      try {
-        await client.messageMove(uid, label, { uid: true });
-        return `Moved message UID ${uid} to ${label}`;
-      } catch {
-        await client.messageFlagsAdd(uid, [`\\${label}`], { uid: true });
-        return `Applied label "${label}" to message UID ${uid}`;
-      } finally { lock.release(); await client.logout(); }
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // File: move
-  if (name === 'move_file') {
-    const src = resolveSafePath(args.from);
-    const dest = resolveSafePath(args.to);
-    if (!src) return 'ERROR: source path not allowed';
-    if (!dest) return 'ERROR: destination path not allowed';
-    try { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.renameSync(src, dest); return `Moved ${src} → ${dest}`; }
-    catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // File: copy
-  if (name === 'copy_file') {
-    const src = resolveSafePath(args.from);
-    const dest = resolveSafePath(args.to);
-    if (!src) return 'ERROR: source path not allowed';
-    if (!dest) return 'ERROR: destination path not allowed';
-    try { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.copyFileSync(src, dest); return `Copied ${src} → ${dest}`; }
-    catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // File: delete (staged only — never immediate)
-  if (name === 'delete_file') {
-    const abs = resolveSafePath(args.path);
-    if (!abs) return 'ERROR: path not allowed';
-    staged.files.push({ path: abs, content: '__DELETE__' });
-    return `DELETE staged for ${abs}. This will be executed when user clicks APPLY.`;
-  }
-
-  // Analysis: image via Anthropic Vision
-  if (name === 'analyze_image') {
-    const abs = resolveSafePath(args.path);
-    if (!abs) return 'ERROR: path not allowed';
-    if (!anthropicApiKey) return 'ERROR: ANTHROPIC_API_KEY not configured';
-    try {
-      const imgBuf = fs.readFileSync(abs);
-      const base64 = imgBuf.toString('base64');
-      const ext = path.extname(abs).toLowerCase().replace('.', '');
-      const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
-      const mediaType = mimeMap[ext] || 'image/jpeg';
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-api-key': anthropicApiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({
-          model: anthropicModel,
-          max_tokens: 1024,
-          messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } }, { type: 'text', text: 'Describe this image in detail.' }] }]
-        })
-      });
-      if (!r.ok) return `ERROR: Vision API ${r.status}`;
-      const payload = await r.json();
-      return payload.content?.[0]?.text || '(no description)';
-    } catch (err) { return `ERROR: ${err.message}`; }
-  }
-
-  // Agent: create agent .md definition (staged for review)
-  if (name === 'create_agent') {
-    const abs = resolveSafePath(args.path);
-    if (!abs) return 'ERROR: path not allowed';
-    const content = String(args.content || '').trim();
-    if (!content) return 'ERROR: content required';
-    staged.files.push({ path: abs, content });
-    return `STAGED agent definition at ${abs}. Click APPLY to write it to disk.`;
-  }
-
-  // Skill: create skill .md (staged for review)
-  if (name === 'create_skill') {
-    const abs = resolveSafePath(args.path || path.join(skillsPath, 'new-skill.md'));
-    if (!abs) return 'ERROR: path not allowed';
-    const content = String(args.content || '').trim();
-    if (!content) return 'ERROR: content required';
-    staged.files.push({ path: abs, content });
-    return `STAGED skill at ${abs}. Click APPLY to install it into the skills library.`;
-  }
-
-  // PM2: deploy service
-  if (name === 'deploy_pm2') {
-    const script = String(args.script || '').trim();
-    const name = String(args.name || '').trim();
-    const cwd = String(args.cwd || path.dirname(script)).trim();
-    if (!script || !name) return 'ERROR: script and name required';
-    const ecosystemPath = path.join(cwd, 'ecosystem.config.cjs');
-    let ecosystem = { apps: [] };
-    try { ecosystem = JSON.parse(fs.readFileSync(ecosystemPath, 'utf8')); } catch {}
-    ecosystem.apps = ecosystem.apps.filter(a => a.name !== name);
-    ecosystem.apps.push({ name, script, cwd, autorestart: true, max_restarts: 5, env: { NODE_ENV: 'production' } });
-    const content = `module.exports = ${JSON.stringify(ecosystem, null, 2)};`;
-    staged.files.push({ path: ecosystemPath, content });
-    return `STAGED PM2 entry "${name}" in ${ecosystemPath}. Click APPLY then run: pm2 start ecosystem.config.cjs --only ${name}`;
-  }
-
-  // Fall through to standard exec tools
-  return runExecTool(name, args, staged);
-}
 
 function persistStagedRun(staged) {
   const dir = path.join(stagingRoot, staged.id);
@@ -1901,188 +1115,11 @@ async function runNimQc(staged, prompt, parentSignal) {
   }
 }
 
-// Claude architect system prompt — senior dev director loop
-// Claude directs one task at a time and sees results before deciding the next step.
-const CLAUDE_ARCHITECT_SYSTEM = `You are the senior software developer at Maverick Integrations. Your job is to troubleshoot, debug, isolate, and direct code changes.
+// System prompts imported from server/services/systemPrompts.mjs
+// CLAUDE_ARCHITECT_SYSTEM — senior dev director loop (imported above)
+// CLAUDE_OPS_SYSTEM — personal ops assistant (imported above)
 
-You work with an executor (Qwen) who can only follow exact mechanical instructions. You direct, Qwen executes.
 
-Your workflow: analyze the problem → decide the next single action → output JSON → see the result → repeat until done.
-
-You have read/write access to the entire filesystem except Windows system directories
-(Windows\\, Program Files\\, System32\\, SysWOW64\\, AppData\\Local\\Temp, WindowsApps\\).
-Attached folders and files from the user are always in scope.
-
-The workspace tree below shows your current project and nearby directories. Use list_dir to explore
-any path not listed — you have full access to navigate anywhere on any drive.
-To discover what's available: {"task":{"tool":"list_dir","path":"C:\\\\"}} or {"task":{"tool":"list_dir","path":"D:\\\\"}}
-
-Each response must be pure JSON — no prose, no markdown fences, one of:
-
-Delegate a task:
-{"task":{"tool":"read_file","path":"C:\\\\Workspace\\\\MyProject\\\\file.js"}}
-{"task":{"tool":"list_dir","path":"C:\\\\Workspace\\\\MyProject"}}
-{"task":{"tool":"list_dir","path":"D:\\\\"}}
-{"task":{"tool":"run_command","command":"node --check server.mjs"}}
-{"task":{"tool":"write_file","path":"C:\\\\Workspace\\\\MyProject\\\\file.js","instruction":"Exact description: which function, what to add/change/remove, and where. Be specific enough that a junior dev could do it mechanically."}}
-
-Ask for clarification before proceeding (use when critical info is missing):
-{"clarify":"What trigger should start this agent — scheduled, file event, or manual?"}
-
-Declare done (no file changes needed):
-{"done":true,"answer":"Your direct answer or explanation to the user"}
-
-Propose a plan for user confirmation (agent creation, large changes):
-{"done":true,"answer":"Here is the proposed agent:\\n\\n\`\`\`markdown\\n# Agent: ...\\n\`\`\`\\n\\nShould I create this at [path]? Reply yes to proceed."}
-
-Declare done (files were changed):
-{"done":true,"summary":"What was changed and why, 2-3 sentences"}
-
-## Creating Maverick Agents
-
-When the user asks you to create, build, or make an agent:
-1. If purpose, trigger, or target folder is unclear — use clarify first.
-2. Once you have enough info — propose the full .md content with done+answer. Do NOT write yet.
-3. When the user replies yes/confirmed/looks good — then write_file via Qwen.
-
-Maverick agents are .md files. The format:
-
-\`\`\`
-# Agent: [Name]
-
-## Purpose
-[One sentence — what this agent does and why]
-
-## Trigger
-[When it runs — e.g. "Manual", "Scheduled daily at 9am", "Event: new file in Downloads"]
-
-## Instructions
-1. [Step one]
-2. [Step two]
-...
-
-## Tools
-[list_dir / read_file / run_command / Gmail API / Puppeteer / etc.]
-
-## Output
-[What it produces — e.g. "Slack notification", "Email reply", "Updated spreadsheet"]
-\`\`\`
-
-Agent file naming: kebab-case. Examples: monitor-invoices.md, daily-voicemail-check.md
-Agent folder: use the attached folder path if provided, otherwise ask.
-
-## Creating Maverick Skills
-
-Skills are reusable step-by-step procedures that YOU (Claude) follow when doing specific tasks. They live in the MCC skills/ folder (${skillsPath}) and are automatically loaded into your context on every BUILD request.
-
-When the user asks you to create a skill:
-1. If purpose or trigger is unclear — use clarify first.
-2. Propose the full skill .md with done+answer — do NOT write yet.
-3. When the user confirms — write_file to the skills/ folder via Qwen.
-
-Skills format:
-\`\`\`
-# Skill: [Name]
-
-## Trigger
-[When to apply this skill — what the user says or what task type triggers it]
-
-## Procedure
-1. [Exact step Claude should take]
-2. [Next step — include tool names, paths, naming conventions]
-...
-
-## Output
-[What gets created or changed — file paths, formats, expected result]
-
-## Notes
-[Gotchas, constraints, things to check or verify]
-\`\`\`
-
-Skill file naming: kebab-case. Examples: create-agent.md, deploy-pm2-service.md, add-api-endpoint.md
-Skill folder: always ${skillsPath}
-
-When Loaded Skills appear in your context above, read them and follow their procedures precisely for matching tasks.
-
-## General Rules
-- One task per response. Wait for the result before deciding the next task.
-- Use absolute paths (e.g. C:\\Workspace\\...) whenever possible.
-- Always read_file before write_file on the same path.
-- For write_file: "instruction" must be exact — location, function name, what changes. Qwen is mechanical.
-- For simple info requests: read the file and declare done with an answer. Do not write anything.
-- Be surgical. Never touch files unrelated to the problem.
-- When the problem is fully resolved or the question is answered, declare done.`;
-
-// OPS mode orchestrator prompt — personal assistant with full tool suite
-const CLAUDE_OPS_SYSTEM = `You are Maverick's personal operations assistant for Maverick Integrations.
-You orchestrate tasks in an agentic loop — you decide one action at a time, see the result, then decide the next.
-This is an INTERNAL protocol. Your JSON directives are NEVER shown to the user. The user only sees your final answer or summary.
-
-Output pure JSON — one directive per response, no prose, no markdown fences:
-
-Standard tools:
-{"task":{"tool":"list_dir","path":"C:\\\\Workspace\\\\MyProject"}}
-{"task":{"tool":"read_file","path":"C:\\\\Workspace\\\\docs\\\\notes.md"}}
-{"task":{"tool":"write_file","path":"C:\\\\Workspace\\\\agents\\\\monitor.md","instruction":"Write a complete agent definition file with the following content..."}}
-{"task":{"tool":"run_command","command":"python scripts\\\\process.py"}}
-{"task":{"tool":"fetch_url","url":"https://example.com/api/data"}}
-{"task":{"tool":"web_search","query":"best practices for invoice tracking"}}
-
-Document tools:
-{"task":{"tool":"read_docx","path":"C:\\\\Workspace\\\\Proposals\\\\quote.docx"}}
-{"task":{"tool":"read_pdf","path":"C:\\\\Workspace\\\\Contracts\\\\agreement.pdf"}}
-{"task":{"tool":"read_xlsx","path":"C:\\\\Workspace\\\\Reports\\\\jobs.xlsx","sheet":"Sheet1"}}
-{"task":{"tool":"write_xlsx","path":"C:\\\\Workspace\\\\Reports\\\\monthly.xlsx","sheets":[{"name":"Jobs","headers":["Date","Client","Amount"],"rows":[["2025-01-15","Acme Corp","1200"]]}]}}
-{"task":{"tool":"write_csv","path":"C:\\\\Workspace\\\\exports\\\\data.csv","headers":["Name","Value"],"rows":[["item1","100"]]}}
-{"task":{"tool":"read_csv","path":"C:\\\\Workspace\\\\data\\\\records.csv"}}
-
-Email tools (requires EMAIL_IMAP_HOST and EMAIL_SMTP_HOST in .env):
-{"task":{"tool":"list_emails","mailbox":"INBOX","limit":20}}
-{"task":{"tool":"search_emails","query":"invoice overdue","limit":10}}
-{"task":{"tool":"read_email","uid":"12345"}}
-{"task":{"tool":"send_email","to":"client@example.com","subject":"Follow-up on Proposal","body":"Hi,\\n\\nJust following up...\\n\\nBest,\\nMaverick Integrations"}}
-{"task":{"tool":"create_draft","to":"partner@example.com","subject":"Meeting Tomorrow","body":"Hi,\\n\\nAre you available..."}}
-{"task":{"tool":"label_email","uid":"12345","label":"Invoices"}}
-
-File management:
-{"task":{"tool":"move_file","from":"C:\\\\Workspace\\\\old.txt","to":"C:\\\\Workspace\\\\archive\\\\old.txt"}}
-{"task":{"tool":"copy_file","from":"C:\\\\Workspace\\\\template.docx","to":"C:\\\\Workspace\\\\Projects\\\\NewProject\\\\proposal.docx"}}
-{"task":{"tool":"delete_file","path":"C:\\\\Workspace\\\\temp\\\\scratch.txt"}}
-
-Analysis:
-{"task":{"tool":"analyze_image","path":"C:\\\\Workspace\\\\photos\\\\site.jpg"}}
-
-Agent & skill creation:
-{"task":{"tool":"create_agent","path":"C:\\\\Workspace\\\\agents\\\\invoice-monitor.md","content":"# Agent: Invoice Monitor\\n\\n## Purpose\\nMonitor inbox for invoices..."}}
-{"task":{"tool":"create_skill","path":"${skillsPath}\\\\write-proposal.md","content":"# Skill: Write Proposal\\n\\n## Trigger\\nUser asks to create or draft a proposal..."}}
-{"task":{"tool":"deploy_pm2","script":"C:\\\\Workspace\\\\agents\\\\invoice-monitor.mjs","name":"invoice-monitor","cwd":"C:\\\\Workspace\\\\agents"}}
-
-Control flow:
-{"clarify":"Which folder should I save the report to?"}
-{"done":true,"answer":"Here is the summary of your inbox: ..."}
-{"done":true,"summary":"Created spreadsheet with 42 rows at C:\\\\Workspace\\\\Reports\\\\monthly.xlsx and sent follow-up email to 3 clients."}
-
-## Agent Creation Protocol
-1. If purpose, trigger, or save location is unclear — clarify first
-2. Propose full .md content via done+answer — do NOT write yet
-3. When user confirms → use create_agent tool to write the file (staged for APPLY)
-
-Agent format:
-# Agent: [Name]
-## Purpose / ## Trigger / ## Instructions (numbered) / ## Tools / ## Output / ## Schedule (if recurring)
-
-## Skill Creation Protocol
-1. Skills auto-load on every BUILD/OPS session from the skills/ folder
-2. Propose skill content via done+answer first, then write on confirmation
-3. Use create_skill tool pointing to ${skillsPath}
-
-## General Rules
-- One task per response. Wait for the result before the next.
-- Use absolute paths always.
-- Always read_file or read_docx/read_pdf before writing or editing documents.
-- For emails: list_emails or search_emails first to find UIDs, then read_email for full content.
-- Never delete files without first asking via clarify — use delete_file only after confirmation.
-- When done, declare done with a clear summary of what was accomplished.`;
 
 function buildChatSseWrite(res, event) {
   res.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -2445,6 +1482,12 @@ async function handleChat(req, res) {
       return;
     }
 
+    // PI → Pi coding agent in RPC mode (local model, agentic file editing)
+    if (mode === 'pi') {
+      await runPiChat(res, controller.signal, prompt.trim(), { history: histMsgs });
+      return;
+    }
+
     // ASK → RAG first (12s timeout), Qwen fallback for general questions
     if (mode === 'ask') {
       let ragOk = false;
@@ -2579,23 +1622,10 @@ async function handleChat(req, res) {
   }
 }
 
-const ALLOWED_ORIGINS = [
-  'https://homelab-noc-dashboard.vercel.app',
-  'https://carterspc.tailf72e3f.ts.net',
-  'http://localhost:5173',
-  'http://localhost:3011',
-];
-
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
-  // CORS — allow Vercel frontend, Tailscale Funnel, and local dev
-  const origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.ts.net')) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  }
+  applyCors(req, res, ALLOWED_ORIGINS);
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
@@ -2687,6 +1717,13 @@ const server = http.createServer(async (req, res) => {
     }));
     return;
   }
+  if (url.pathname === '/api/workflows/seo/facebook/new-schedule' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    sendJson(res, 200, await callRepoBridge('/seo/facebook/new-schedule', {
+      method: 'POST', body, timeoutMs: 30_000,
+    }));
+    return;
+  }
   if (url.pathname === '/api/orchestrator/plan' && req.method === 'POST') {
     await createOrchestratorPlan(req, res);
     return;
@@ -2737,7 +1774,7 @@ const server = http.createServer(async (req, res) => {
       send(res, 404, 'not found\n');
       return;
     }
-    send(res, 200, data, types[path.extname(finalPath).toLowerCase()] || 'application/octet-stream');
+    send(res, 200, data, MIME_TYPES[path.extname(finalPath).toLowerCase()] || 'application/octet-stream');
   });
 });
 
