@@ -9,3 +9,4 @@ dashboard-*.png
 .vercel
 
 tmp/
+.claude/
