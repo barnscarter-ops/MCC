@@ -2464,10 +2464,6 @@ async function handleChat(req, res) {
           if (reply) {
             ragOk = true;
             sseWrite(res, reply);
-            if (Array.isArray(ragData.sources) && ragData.sources.length) {
-              const srcList = ragData.sources.slice(0, 4).map(s => s.title || s.id || String(s)).join(', ');
-              sseWrite(res, `\n\n---\n*Sources: ${srcList}*`);
-            }
           }
         }
       } catch { /* RAG offline or timed out — fall through */ }

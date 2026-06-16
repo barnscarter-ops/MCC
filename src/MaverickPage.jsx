@@ -19,9 +19,18 @@ function MsgBubble({ msg }) {
 }
 
 function SourceChip({ source }) {
+  const label = typeof source === 'string'
+    ? source
+    : source?.title || source?.source || source?.id || source?.url || source?.type || 'source';
+  const type = typeof source === 'object' && source?.type ? `${source.type}: ` : '';
+  const score = typeof source === 'object' && Number.isFinite(source?.score) ? ` (${source.score.toFixed(3)})` : '';
+  const title = typeof source === 'object'
+    ? source.text || source.source || source.title || label
+    : source;
+
   return (
-    <span className="mavSource" title={source.text}>
-      {source.source || source.type} {source.score ? `(${source.score})` : ''}
+    <span className="mavSource" title={title}>
+      {type}{label}{score}
     </span>
   );
 }
