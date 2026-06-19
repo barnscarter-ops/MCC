@@ -1364,8 +1364,8 @@ body {
 
 .hardwareGrid {
   grid-template-areas:
-    "network network network network network network server server server server server server"
-    "workstation workstation workstation workstation workstation workstation model model model model model model";
+    "workstation workstation workstation workstation workstation workstation server server server server server server"
+    "network network network network network network model model model model model model";
 }
 
 .hardwareGrid > .workstation { grid-area: workstation; }
@@ -2375,9 +2375,9 @@ body {
 
   .hardwareGrid {
     grid-template-areas:
-      "network"
       "server"
       "workstation"
+      "network"
       "model";
   }
 
@@ -6063,10 +6063,10 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   .hardwareGrid {
     grid-template-columns: 1fr !important;
     grid-template-areas:
+      "server"
       "workstation"
-      "model"
       "network"
-      "server" !important;
+      "model" !important;
   }
   .hardwareGrid > .workstation,
   .hardwareGrid > .modelOps,
