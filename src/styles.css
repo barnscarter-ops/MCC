@@ -5228,9 +5228,9 @@ body {
   overflow: hidden;
 }
 .sidebarLogoImg {
-  width: 186px;
+  width: 210px;
   height: auto;
-  max-height: 52px;
+  max-height: 62px;
   object-fit: contain;
   object-position: left center;
   display: block;
