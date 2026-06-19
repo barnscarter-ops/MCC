@@ -132,15 +132,21 @@ export async function querySeoActions() {
   return response.json();
 }
 
-export async function approveSeoAction(actionId, note = '') {
+export async function approveSeoAction(actionId, label = '', type = '', note = '') {
   const response = await fetch(api('/api/workflows/seo/actions/approve'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ actionId, approvedBy: 'MCC', note })
+    body: JSON.stringify({ actionId, label, type, approvedBy: 'MCC', note })
   });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || `SEO approval failed: ${response.status}`);
   return payload;
+}
+
+export async function querySeoTaskLog() {
+  const response = await fetch(api('/api/workflows/seo/tasks/log'), { cache: 'no-store' });
+  if (!response.ok) throw new Error(`SEO task log failed: ${response.status}`);
+  return response.json();
 }
 
 export async function querySeoWeekPosts() {
@@ -165,11 +171,11 @@ export async function approveFacebookDay1Prompt(prompt) {
   return response.json();
 }
 
-export async function runSeoAction(actionId, live = false) {
+export async function runSeoAction(actionId, label = '', type = '', live = false) {
   const response = await fetch(api('/api/workflows/seo/actions/run'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ actionId, live })
+    body: JSON.stringify({ actionId, label, type, live })
   });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || `SEO action run failed: ${response.status}`);

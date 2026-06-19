@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { querySeoWorkflow, querySeoActions, approveSeoAction, runSeoAction, querySeoWeekPosts, api } from './lib/api.js';
+import { querySeoWorkflow, querySeoActions, approveSeoAction, runSeoAction, querySeoWeekPosts, querySeoTaskLog, api } from './lib/api.js';
 
 const TYPE_LABEL = { seo_run: 'SEO RUN', website_task: 'WEBSITE TASK', social_post: 'SOCIAL POST' };
 const STATE_COLOR = { pending_approval: '#f59e0b', needs_approval: '#f59e0b', approved: '#10b981', executing: '#6366f1', complete: '#10b981', needs_verification: '#ef4444', error: '#ef4444', 'not-configured': '#6b7280' };
@@ -190,7 +190,7 @@ function ActionCard({ action, onApprove, onRun, busy }) {
     setApproving(true);
     setResult(null);
     try {
-      const res = await approveSeoAction(action.id);
+      const res = await approveSeoAction(action.id, action.label, action.type);
       setResult({ ok: true, msg: res.message || 'Approved — bridge will execute shortly.' });
       onApprove?.();
     } catch (err) {
@@ -204,7 +204,7 @@ function ActionCard({ action, onApprove, onRun, busy }) {
     setRunning(true);
     setResult(null);
     try {
-      const res = await runSeoAction(action.id, true);
+      const res = await runSeoAction(action.id, action.label, action.type, true);
       setResult({ ok: true, msg: res.message || 'Triggered.' });
       onRun?.();
     } catch (err) {
@@ -256,10 +256,45 @@ function ActionCard({ action, onApprove, onRun, busy }) {
   );
 }
 
+const EVENT_LABEL = { approved: 'APPROVED', run: 'RUN NOW' };
+const EVENT_COLOR = { approved: '#10b981', run: '#6366f1' };
+
+function TaskActivity({ tasks }) {
+  if (!tasks || tasks.length === 0) return (
+    <div style={{ marginTop: 32, borderTop: '1px solid #2a2f45', paddingTop: 24 }}>
+      <div style={{ color: '#94a3b8', fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Task Activity</div>
+      <div style={{ color: '#6b7280', fontSize: 13 }}>No task events yet. Approve or run an action to see activity here.</div>
+    </div>
+  );
+  return (
+    <div style={{ marginTop: 32, borderTop: '1px solid #2a2f45', paddingTop: 24 }}>
+      <div style={{ color: '#94a3b8', fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Task Activity</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {tasks.map((t, i) => {
+          const evColor = t.ok ? (EVENT_COLOR[t.event] || '#10b981') : '#ef4444';
+          const evLabel = t.ok ? (EVENT_LABEL[t.event] || t.event.toUpperCase()) : 'FAILED';
+          const typeLabel = TYPE_LABEL[t.type] || t.type?.toUpperCase() || 'TASK';
+          const timeStr = new Date(t.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          return (
+            <div key={i} style={{ background: '#161922', border: '1px solid #2a2f45', borderRadius: 7, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ background: evColor + '22', color: evColor, border: `1px solid ${evColor}44`, borderRadius: 4, padding: '2px 7px', fontSize: 10, fontWeight: 700, letterSpacing: 1, flexShrink: 0 }}>{evLabel}</span>
+              <StatusBadge label={typeLabel} color="#6b7280" />
+              <span style={{ color: '#f1f5f9', fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.label}</span>
+              {t.msg && <span style={{ color: t.ok ? '#6b7280' : '#ef4444', fontSize: 11, maxWidth: 200, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={t.msg}>{t.msg}</span>}
+              <span style={{ color: '#4b5563', fontSize: 11, flexShrink: 0 }}>{timeStr}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function SEOApprovalPage() {
   const [workflow, setWorkflow] = useState(null);
   const [actions, setActions] = useState([]);
   const [weekPosts, setWeekPosts] = useState(null);
+  const [taskLog, setTaskLog] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -270,10 +305,11 @@ export default function SEOApprovalPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wf, ac, wp] = await Promise.all([querySeoWorkflow(), querySeoActions(), querySeoWeekPosts()]);
+      const [wf, ac, wp, tl] = await Promise.all([querySeoWorkflow(), querySeoActions(), querySeoWeekPosts(), querySeoTaskLog().catch(() => ({ tasks: [] }))]);
       setWorkflow(wf);
       setActions(ac.actions || []);
       setWeekPosts(wp);
+      setTaskLog(tl.tasks || []);
       setError(null);
       setLastUpdated(new Date());
 
@@ -459,6 +495,7 @@ export default function SEOApprovalPage() {
           )}
 
           <WeekPostsSection weekPosts={weekPosts} />
+          <TaskActivity tasks={taskLog} />
         </>
       )}
     </div>

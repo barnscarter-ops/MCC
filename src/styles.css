@@ -5610,9 +5610,15 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
 .internet       { top: 110px !important; min-height: 62px !important; }
 .router         { top: 196px !important; min-height: 68px !important; }
 .switch         { top: 292px !important; min-height: 110px !important; }
-.workstationNode{ top: 440px !important; left: 60px !important; }
-.serverNode     { top: 440px !important; right: 60px !important; }
-.meshNode       { top: 440px !important; bottom: auto !important; left: calc(50% - 105px) !important; }
+/* Endpoint nodes: 170px wide, percentage centers match SVG x=20.5%/50%/79.5% */
+.workstationNode, .serverNode, .meshNode { width: 170px !important; }
+.workstationNode { top: 440px !important; left:  calc(20.5% - 85px) !important; }
+.serverNode      { top: 440px !important; right: calc(20.5% - 85px) !important; }
+.meshNode        { top: 440px !important; bottom: auto !important; left: calc(50% - 85px) !important; }
+/* Mobile: scroll rather than crush */
+@media (max-width: 640px) {
+  .topologyCanvas { overflow-x: auto !important; min-width: 620px !important; }
+}
 
 /* Topology node styling — more refined */
 .topoDevice {

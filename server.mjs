@@ -328,6 +328,13 @@ async function callRepoBridge(pathname, { method = 'GET', body = null, timeoutMs
   }
 }
 
+// In-memory task event log — persists across client refreshes, max 100 entries
+const seoTaskLog = [];
+function logSeoEvent(actionId, label, type, event, ok, msg) {
+  seoTaskLog.push({ actionId, label: label || actionId, type: type || 'unknown', event, at: Date.now(), ok, msg });
+  if (seoTaskLog.length > 100) seoTaskLog.shift();
+}
+
 async function proxySeoActions(req, res, action) {
   try {
     if (action === 'list') {
@@ -335,31 +342,40 @@ async function proxySeoActions(req, res, action) {
       return;
     }
     const payload = await readJsonBody(req);
+    const { actionId, label, type } = payload;
     if (action === 'approve') {
-      sendJson(res, 200, await callRepoBridge('/seo/actions/approve', {
-        method: 'POST',
-        body: payload,
-        timeoutMs: 180_000
-      }));
+      let result;
+      try {
+        result = await callRepoBridge('/seo/actions/approve', { method: 'POST', body: payload, timeoutMs: 180_000 });
+        logSeoEvent(actionId, label, type, 'approved', true, result.message || 'Approved');
+        sendJson(res, 200, result);
+      } catch (err) {
+        logSeoEvent(actionId, label, type, 'approved', false, err.message);
+        throw err;
+      }
       return;
     }
     if (action === 'run') {
-      sendJson(res, 200, await callRepoBridge('/seo/actions/run', {
-        method: 'POST',
-        body: payload,
-        timeoutMs: 600_000
-      }));
+      let result;
+      try {
+        result = await callRepoBridge('/seo/actions/run', { method: 'POST', body: payload, timeoutMs: 600_000 });
+        logSeoEvent(actionId, label, type, 'run', true, result.message || 'Triggered');
+        sendJson(res, 200, result);
+      } catch (err) {
+        logSeoEvent(actionId, label, type, 'run', false, err.message);
+        throw err;
+      }
     }
   } catch (error) {
     sendJson(res, 500, { error: error.message, source: 'repo-bridge' });
   }
 }
 
-async function readJsonBody(req) {
+async function readJsonBody(req, maxSize = 512_000) {
   let body = '';
   for await (const chunk of req) {
     body += chunk;
-    if (body.length > 512_000) throw new Error('Request body too large');
+    if (body.length > maxSize) throw new Error('Request body too large');
   }
   return body ? JSON.parse(body) : {};
 }
@@ -3225,6 +3241,10 @@ const server = http.createServer(async (req, res) => {
     await proxySeoActions(req, res, 'list');
     return;
   }
+  if (url.pathname === '/api/workflows/seo/tasks/log') {
+    sendJson(res, 200, { tasks: [...seoTaskLog].reverse().slice(0, 50) });
+    return;
+  }
   if (url.pathname === '/api/workflows/seo/actions/approve' && req.method === 'POST') {
     await proxySeoActions(req, res, 'approve');
     return;
@@ -3270,6 +3290,100 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/build/apply' && req.method === 'POST') {
     await applyStagedRun(req, res);
+    return;
+  }
+  if (url.pathname === '/api/extract-file' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req, 50_000_000); // 50MB — PDFs can be large as base64
+      const { name = '', data, path: filePath } = body;
+      const ext = path.extname(name || filePath || '').toLowerCase();
+      let text = '';
+      const { createRequire } = await import('module');
+      const requireFn = createRequire(import.meta.url);
+
+      async function extractPdf(buf) {
+        const pdfParse = requireFn('pdf-parse');
+        const result = await pdfParse(buf).catch(() => ({ text: '' }));
+        const raw = result.text || '';
+
+        // Scanned/image-based PDF — pdf-parse returns nothing; fall back to Anthropic vision
+        if (raw.length < 500) {
+          if (!anthropicApiKey) return '[PDF is image-based and ANTHROPIC_API_KEY is not set]';
+          const b64 = buf.toString('base64');
+          const visionRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-api-key': anthropicApiKey, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'pdfs-2024-09-25' },
+            body: JSON.stringify({
+              model: anthropicModel,
+              max_tokens: 4096,
+              messages: [{
+                role: 'user',
+                content: [
+                  { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+                  { type: 'text', text: 'This is a home inspection report. Extract ALL electrical findings: deficiencies, items requiring a licensed electrician, safety hazards (GFCI, AFCI, smoke detectors, bonding, grounding), and any item marked deficient or in need of repair. Quote the report text exactly, including section headings and item numbers.' }
+                ]
+              }]
+            }),
+          });
+          if (!visionRes.ok) return `[Vision extraction failed: ${visionRes.status}]`;
+          const visionData = await visionRes.json();
+          return (visionData.content?.[0]?.text || '[no content returned]').slice(0, 32000);
+        }
+
+        // Text-based PDF — score chunks by electrical keyword density
+        const ELEC = ['electrical','gfci','afci','arc-fault','arc fault','panel','breaker','circuit','wiring','outlet','receptacle','switch','bonding','grounding','licensed electrician','deficien','smoke alarm','smoke detector'];
+        const score = t => { const l = t.toLowerCase(); return ELEC.reduce((n, kw) => n + (l.includes(kw) ? 1 : 0), 0); };
+
+        // Prefer form-feed page breaks; fall back to sliding window for PDFs without them
+        let pages = raw.split('\f').filter(p => p.trim());
+        if (pages.length <= 1) {
+          // No form feeds — chunk into 2000-char windows with 200-char overlap
+          const CHUNK = 2000, STEP = 1800;
+          pages = [];
+          for (let i = 0; i < raw.length; i += STEP) pages.push(raw.slice(i, i + CHUNK));
+        }
+
+        const scored = pages.map((t, i) => ({ i, t, s: score(t) }));
+        // Preamble chunks always score high (boilerplate mentions every keyword) — skip first 10% of chunks
+        const skip = Math.floor(pages.length * 0.1);
+        const hot = scored.filter(p => p.i >= skip && p.s >= 2);
+        if (hot.length === 0) return raw.slice(0, 32000);
+        const keep = new Set();
+        hot.forEach(p => { keep.add(p.i - 1); keep.add(p.i); keep.add(p.i + 1); });
+        const extracted = [...keep].sort((a, b) => a - b)
+          .filter(i => i >= 0 && i < pages.length)
+          .map(i => pages[i].trim())
+          .join('\n\n');
+        return extracted.slice(0, 32000);
+      }
+
+      if (filePath) {
+        const abs = resolveSafePath(filePath);
+        if (!abs) { sendJson(res, 400, { error: 'path not allowed' }); return; }
+        const buf = fs.readFileSync(abs);
+        if (ext === '.pdf') {
+          text = await extractPdf(buf);
+        } else if (ext === '.docx') {
+          const { default: mammoth } = await import('mammoth');
+          text = ((await mammoth.extractRawText({ buffer: buf })).value) || '';
+        } else {
+          text = buf.toString('utf8');
+        }
+      } else if (data) {
+        const buf = Buffer.from(data, 'base64');
+        if (ext === '.pdf') {
+          text = await extractPdf(buf);
+        } else if (ext === '.docx') {
+          const { default: mammoth } = await import('mammoth');
+          text = ((await mammoth.extractRawText({ buffer: buf })).value) || '';
+        } else {
+          text = buf.toString('utf8');
+        }
+      }
+      sendJson(res, 200, { text: text.slice(0, 32000) });
+    } catch (err) {
+      sendJson(res, 500, { error: err.message });
+    }
     return;
   }
   if (url.pathname === '/api/list-dirs' && req.method === 'GET') {
