@@ -6081,11 +6081,16 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   .storageGrid { grid-template-columns: 1fr !important; }
   .modelOpsGrid { grid-template-columns: 1fr !important; }
   .modelMetaGrid { grid-template-columns: repeat(2, 1fr) !important; }
+  .aiRuntimeGrid { grid-template-columns: 1fr !important; }
 
-  /* Hardware network map topology: horizontal scroll */
-  .hardwareNetworkMapPanel {
+  /* Hardware network map: panel itself must scroll (parent overflow:hidden clips children) */
+  .hardwareGrid > .panel.network {
     overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch !important;
+    overflow-y: hidden !important;
+    padding: 12px 0 12px 12px !important; /* keep left padding, let content bleed right */
+  }
+  .hardwareNetworkMapPanel {
+    overflow: visible !important; /* panel is now the scroll container */
   }
   .hardwareTopology { min-width: 560px !important; }
 
@@ -6100,10 +6105,12 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   .mapPage { grid-template-columns: 1fr !important; gap: 10px !important; }
   .mapPanel, .portPanel { min-height: unset !important; }
 
-  /* Topology canvas: fixed height, horizontal scroll */
+  /* Network topology: panel is the scroll container; overflow:hidden on .panel clips children */
   .mapPanel > .panel {
     overflow-x: auto !important;
+    overflow-y: hidden !important;
     -webkit-overflow-scrolling: touch !important;
+    padding: 12px 0 12px 12px !important;
   }
   .topologyCanvas { min-width: 700px !important; }
 
