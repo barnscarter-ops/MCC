@@ -1543,17 +1543,24 @@ async function runOpsExecTool(name, args, staged) {
   // PM2: deploy service
   if (name === 'deploy_pm2') {
     const script = String(args.script || '').trim();
-    const name = String(args.name || '').trim();
+    const svcName = String(args.name || '').trim();
     const cwd = String(args.cwd || path.dirname(script)).trim();
-    if (!script || !name) return 'ERROR: script and name required';
+    if (!script || !svcName) return 'ERROR: script and name required';
     const ecosystemPath = path.join(cwd, 'ecosystem.config.cjs');
     let ecosystem = { apps: [] };
-    try { ecosystem = JSON.parse(fs.readFileSync(ecosystemPath, 'utf8')); } catch {}
-    ecosystem.apps = ecosystem.apps.filter(a => a.name !== name);
-    ecosystem.apps.push({ name, script, cwd, autorestart: true, max_restarts: 5, env: { NODE_ENV: 'production' } });
-    const content = `module.exports = ${JSON.stringify(ecosystem, null, 2)};`;
+    try {
+      const raw = fs.readFileSync(ecosystemPath, 'utf8');
+      // ecosystem files export a module — parse the JSON object literal inside
+      const m = raw.match(/module\.exports\s*=\s*(\{[\s\S]*\});?\s*$/);
+      if (m) ecosystem = JSON.parse(m[1]);
+    } catch {}
+    ecosystem.apps = (ecosystem.apps || []).filter(a => a.name !== svcName);
+    ecosystem.apps.push({ name: svcName, script, cwd, autorestart: true, max_restarts: 5, env: { NODE_ENV: 'production' } });
+    const content = `module.exports = ${JSON.stringify(ecosystem, null, 2)};\n`;
     staged.files.push({ path: ecosystemPath, content });
-    return `STAGED PM2 entry "${name}" in ${ecosystemPath}. Click APPLY then run: pm2 start ecosystem.config.cjs --only ${name}`;
+    if (!staged.pm2Commands) staged.pm2Commands = [];
+    staged.pm2Commands.push({ ecosystemPath, name: svcName });
+    return `STAGED PM2 entry "${svcName}" in ${ecosystemPath}. Click APPLY — PM2 will start/restart the service automatically.`;
   }
 
   // Fall through to standard exec tools
@@ -1573,7 +1580,8 @@ function persistStagedRun(staged) {
     JSON.stringify({
       id: staged.id, createdAt: new Date().toISOString(), prompt: staged.prompt,
       files: staged.files.filter(f => f.content !== '__DELETE__').map(f => ({ path: f.path, chars: f.content.length })),
-      deletions: staged.files.filter(f => f.content === '__DELETE__').map(f => f.path)
+      deletions: staged.files.filter(f => f.content === '__DELETE__').map(f => f.path),
+      pm2Commands: staged.pm2Commands || []
     }, null, 2)
   );
 }
@@ -1627,9 +1635,25 @@ async function applyStagedRun(req, res) {
         deleted.push(dest);
       }
     }
+    // Run any PM2 commands that were staged alongside the files
+    const pm2Results = [];
+    for (const cmd of (manifest.pm2Commands || [])) {
+      try {
+        execSync(`pm2 start "${cmd.ecosystemPath}" --only "${cmd.name}"`, { encoding: 'utf8', timeout: 15_000 });
+        pm2Results.push({ name: cmd.name, status: 'started' });
+      } catch (pm2Err) {
+        // Restart if already registered
+        try {
+          execSync(`pm2 restart "${cmd.name}"`, { encoding: 'utf8', timeout: 10_000 });
+          pm2Results.push({ name: cmd.name, status: 'restarted' });
+        } catch (restartErr) {
+          pm2Results.push({ name: cmd.name, status: 'error', error: restartErr.message });
+        }
+      }
+    }
     manifest.appliedAt = new Date().toISOString();
     fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
-    sendJson(res, 200, { ok: true, applied, deleted, backupDir });
+    sendJson(res, 200, { ok: true, applied, deleted, backupDir, pm2Results });
   } catch (error) {
     sendJson(res, 500, { error: error.message });
   }
@@ -1687,9 +1711,30 @@ async function handleBuildOrchestration(res, controller, prompt, histMsgs, ctxBl
   }
 
   const skillsBlock = loadSkills();
+
+  // Query RAG for relevant coding reference before the director loop
+  let ragRefBlock = '';
+  try {
+    const ragCtrl = new AbortController();
+    const ragTimeout = setTimeout(() => ragCtrl.abort(), 8_000);
+    const ragResp = await fetch(new URL('/estimate', ragUrl), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: ragCtrl.signal,
+      body: JSON.stringify({ message: prompt, history: [], top_k: 6 })
+    });
+    clearTimeout(ragTimeout);
+    if (ragResp.ok) {
+      const ragData = await ragResp.json();
+      const ref = (ragData.reply || '').trim();
+      if (ref) ragRefBlock = `## Coding Reference (knowledge base)\n${ref}`;
+    }
+  } catch { /* RAG offline — continue without reference */ }
+
   const userContent = [
     treeBlock ? `Workspace file tree:\n${treeBlock}` : '',
     skillsBlock ? `## Loaded Skills\n\n${skillsBlock}` : '',
+    ragRefBlock,
     attachBlock,
     `Request: ${prompt}`
   ].filter(Boolean).join('\n\n');
@@ -1919,6 +1964,24 @@ async function runNimQc(staged, prompt, parentSignal) {
   }
 }
 
+// ASK mode — general conversational AI with homelab context
+const CLAUDE_ASK_SYSTEM = `You are Maverick, Carter's personal AI assistant running inside the MCC Dashboard.
+
+You know Carter's setup:
+- CartersPC: Windows 11 Pro, Intel i5-13600K, RTX 4060 Ti 16GB, 64GB RAM. Workspace at C:\\Workspace\\Active\\.
+- Homelab server (AIWA): HP ProDesk, i5-9500, 32GB RAM, 2TB NVMe + 500GB SATA, running Proxmox at 192.168.1.12.
+- Services: RAG knowledge base (port 8181), Prometheus metrics (9090), local Qwen model (8080 via llama.cpp), Ollama (11434), Tailscale funnel for remote access.
+- MCC Dashboard: Node.js server on port 3000, managed by PM2. Three modes: ASK (you), BUILD (coding agent), OPS (business assistant).
+- SEO agents, download watcher, and mav-bridge are running as separate PM2 processes.
+
+You're a general-purpose assistant. Help with:
+- Homelab questions: Proxmox, networking, Docker, services, hardware
+- Coding: architecture, debugging, code review, explaining concepts
+- Research, analysis, writing, brainstorming — anything Carter needs
+- Explaining how the MCC itself works (for BUILD or OPS questions, suggest switching mode)
+
+Be direct and concise. No unnecessary preamble. Use the live dashboard context when it's relevant.`;
+
 // Claude architect system prompt — senior dev director loop
 // Claude directs one task at a time and sees results before deciding the next step.
 const CLAUDE_ARCHITECT_SYSTEM = `You are the senior software developer at Maverick Integrations. Your job is to troubleshoot, debug, isolate, and direct code changes.
@@ -1956,7 +2019,7 @@ Propose a plan for user confirmation (agent creation, large changes):
 {"done":true,"answer":"Here is the proposed agent:\\n\\n\`\`\`markdown\\n# Agent: ...\\n\`\`\`\\n\\nShould I create this at [path]? Reply yes to proceed."}
 
 Declare done (files were changed):
-{"done":true,"summary":"What was changed and why, 2-3 sentences"}
+{"done":true,"summary":"What was built or changed, the exact file path(s), and how to run or test it — 2-3 sentences"}
 
 ## Creating Maverick Agents
 
@@ -2518,9 +2581,28 @@ async function handleBuildChat(req, res) {
     .filter(m => (m.role === 'user' || m.role === 'assistant') && String(m.content || '').trim())
     .map(m => ({ role: m.role, content: String(m.content) }));
 
+  // Query RAG for relevant coding reference before the director loop
+  let ragRefBlock = '';
+  try {
+    const ragCtrl = new AbortController();
+    const ragTimeout = setTimeout(() => ragCtrl.abort(), 8_000);
+    const ragResp = await fetch(new URL('/estimate', ragUrl), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: ragCtrl.signal,
+      body: JSON.stringify({ message: String(prompt).trim(), history: [], top_k: 6 })
+    });
+    clearTimeout(ragTimeout);
+    if (ragResp.ok) {
+      const ragData = await ragResp.json();
+      const ref = (ragData.reply || '').trim();
+      if (ref) ragRefBlock = `\n\n## Coding Reference (knowledge base)\n${ref}`;
+    }
+  } catch { /* RAG offline — continue without reference */ }
+
   const claudeMessages = [
     ...histMsgs,
-    { role: 'user', content: `${treeContext}Request: ${String(prompt).trim()}` }
+    { role: 'user', content: `${treeContext}${ragRefBlock ? ragRefBlock + '\n\n' : ''}Request: ${String(prompt).trim()}` }
   ];
 
   buildChatSseWrite(res, { type: 'status', text: 'Claude is analyzing...' });
@@ -2686,9 +2768,9 @@ async function handleChat(req, res) {
     const ctxBlock = `\n\n--- LIVE DASHBOARD CONTEXT ---\n${dashCtx}\n--- END CONTEXT ---`;
 
     const systemPrompts = {
-      ask: `You are Maverick, the AI assistant for Maverick Integrations. You help the team answer questions about the company, customers, projects, electrical codes, scheduling, and daily operations. You are friendly, knowledgeable, and concise. Reference company context below when relevant.${ctxBlock}`,
-      build: `You are Maverick in BUILD mode. Focus on code, implementation, and technical execution. Be precise. Avoid explanations unless asked.${ctxBlock}`,
-      ops: `You are Maverick's Operations assistant for Maverick Integrations. You help with customer communications, drafting emails and proposals, scheduling follow-ups, taking notes, setting reminders, and administrative tasks. You are professional, organized, and action-oriented. When the user references a client or project, use the company context below.${ctxBlock}`,
+      ask:  CLAUDE_ASK_SYSTEM  + ctxBlock,
+      build: CLAUDE_ARCHITECT_SYSTEM + ctxBlock,
+      ops:   CLAUDE_OPS_SYSTEM + ctxBlock,
     };
     const system = systemPrompts[mode] || systemPrompts.ask;
 
@@ -2744,40 +2826,54 @@ async function handleChat(req, res) {
       } catch { /* RAG offline or timed out — fall through */ }
 
       if (!ragOk) {
-        // Qwen fallback: answer general questions with dashboard context
+        // Claude fallback (→ GPT-4o if no key), then Qwen if both unavailable
         const msgs = [
-          { role: 'system', content: system + attachBlock },
           ...histMsgs,
-          { role: 'user', content: prompt.trim() }
+          { role: 'user', content: prompt.trim() + (attachBlock ? '\n\n' + attachBlock : '') }
         ];
+        let claudeOk = false;
         try {
-          const upstream = await fetch(new URL('/v1/chat/completions', llamaServerUrl), {
-            method: 'POST',
-            signal: controller.signal,
-            headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-            body: JSON.stringify({ model: localModel, messages: msgs, stream: true, temperature: 0.7, max_tokens: 1400 })
-          });
-          if (upstream.ok) {
-            const reader = upstream.body.getReader();
-            const decoder = new TextDecoder();
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                if (!res.writable) break;
-                res.write(decoder.decode(value, { stream: true }));
-              }
-            } finally {
-              reader.releaseLock();
+          const directive = await callClaude(msgs, controller.signal, system);
+          const reply = directive.answer || directive.summary || (typeof directive === 'string' ? directive : '');
+          if (reply) { sseWrite(res, reply); claudeOk = true; }
+        } catch (cErr) {
+          if (cErr.name === 'AbortError') { if (res.writable) { res.write('data: [DONE]\n\n'); res.end(); } return; }
+        }
+
+        if (!claudeOk) {
+          // Qwen last-resort: local model when both RAG and Claude are unavailable
+          const qMsgs = [
+            { role: 'system', content: system },
+            ...histMsgs,
+            { role: 'user', content: prompt.trim() }
+          ];
+          try {
+            const upstream = await fetch(new URL('/v1/chat/completions', llamaServerUrl), {
+              method: 'POST',
+              signal: controller.signal,
+              headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+              body: JSON.stringify({ model: localModel, messages: qMsgs, stream: true, temperature: 0.7, max_tokens: 1400 })
+            });
+            if (upstream.ok) {
+              const reader = upstream.body.getReader();
+              const decoder = new TextDecoder();
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  if (!res.writable) break;
+                  res.write(decoder.decode(value, { stream: true }));
+                }
+              } finally { reader.releaseLock(); }
+            } else {
+              sseWrite(res, '[All backends offline — please try again]');
+              recordChatFailure('ask', prompt, `RAG + Claude offline, Qwen ${upstream.status}`);
             }
-          } else {
-            sseWrite(res, '[RAG offline and local model unavailable — please try again]');
-            recordChatFailure('ask', prompt, `RAG offline, Qwen ${upstream.status}`);
-          }
-        } catch (qErr) {
-          if (qErr.name !== 'AbortError') {
-            sseWrite(res, `[Error: ${qErr.message}]`);
-            recordChatFailure('ask', prompt, qErr);
+          } catch (qErr) {
+            if (qErr.name !== 'AbortError') {
+              sseWrite(res, `[Error: ${qErr.message}]`);
+              recordChatFailure('ask', prompt, qErr);
+            }
           }
         }
       }
