@@ -176,7 +176,7 @@ function Sidebar({ status, modelStatus }) {
   return (
     <aside className="sidebar">
       <div className="sidebarLogo">
-        <img src="/assets/maverick-core-commander-logo.png" alt="Maverick Core Commander" className="sidebarLogoImg" />
+        <img src="/assets/maverick-core-commander-logo.png" className="sidebarLogoImg" alt="Maverick Core Commander" />
         <span className="sidebarLogoCollapsed">M</span>
       </div>
 
