@@ -329,12 +329,12 @@ export default function SEOApprovalPage() {
   const otherActions = actions.filter(a => a.status !== 'needs_approval' && a.status !== 'pending_approval');
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 860, margin: '0 auto', fontFamily: 'system-ui, sans-serif' }}>
+    <div style={{ padding: '24px 28px', maxWidth: 920, margin: '0 auto' }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, gap: 12 }}>
         <div>
-          <h1 style={{ color: '#f1f5f9', margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase' }}>SEO Pipeline</h1>
+          <h1 className="panelTitle" style={{ margin: 0, fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>SEO Pipeline</h1>
           <p style={{ color: '#6b7280', margin: '4px 0 0', fontSize: 12 }}>
             Review and approve weekly content before it posts
             {lastUpdated && ` · updated ${lastUpdated.toLocaleTimeString()}`}

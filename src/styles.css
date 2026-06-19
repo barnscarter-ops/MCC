@@ -5388,6 +5388,7 @@ body {
 
 .homePage { gap: 14px !important; }
 .mainGrid, .hardwareGrid { gap: 14px !important; }
+.hardwareGrid { align-items: stretch !important; }
 
 /* ═══ PANELS ═════════════════════════════════════════════════════════════════ */
 
@@ -5650,6 +5651,16 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   transition: background var(--r-fast) var(--r-ease),
               border-color var(--r-fast) var(--r-ease) !important;
   padding: 7px 10px !important;
+  grid-template-columns: 40px 1fr 56px 100px !important;
+  gap: 6px !important;
+  overflow: hidden !important;
+}
+/* Speed column: truncate rather than overflow the row */
+.portRow b, .hardwarePortRow b {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  min-width: 0 !important;
+  white-space: nowrap !important;
 }
 .hardwarePortRow:hover, .portRow:hover {
   background: rgba(255,255,255,.05) !important;

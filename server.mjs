@@ -1996,6 +1996,19 @@ You're a general-purpose assistant. Help with:
 
 Be direct and concise. No unnecessary preamble. Use the live dashboard context when it's relevant.`;
 
+// ESTIMATE mode fallback — used when RAG is offline
+const CLAUDE_ESTIMATE_FALLBACK_SYSTEM = `You are Maverick, an estimating assistant for Grizzly Electrical Solutions.
+
+You are a senior estimator and retired jobsite foreman. You help employees scope and price electrical jobs.
+
+When someone describes a job:
+- Ask field-practical questions: panel location, conduit distances, ceiling type, existing service size, meter base condition
+- Guide them through scope they might miss
+- Use Good / Better / Best structure for proposals by default
+- Apply NEC, ONCOR, and Texas AHJ requirements during scope discussion
+
+Note: The RAG knowledge base is temporarily offline. You can still help scope the job and discuss NEC requirements from your training knowledge, but cannot look up specific customer records, past proposals, or current pricebook pricing. Tell the user if they need exact pricing to try again shortly.`;
+
 // Claude architect system prompt — senior dev director loop
 // Claude directs one task at a time and sees results before deciding the next step.
 const CLAUDE_ARCHITECT_SYSTEM = `You are the senior software developer at Maverick Integrations. Your job is to troubleshoot, debug, isolate, and direct code changes.
@@ -2825,6 +2838,56 @@ async function handleClaudeCodeSession(res, controller, prompt, histMsgs, attach
   res.end();
 }
 
+async function handleEstimateMode(res, controller, prompt, histMsgs, attachBlock) {
+  const msgWithAttach = attachBlock ? `${prompt}\n\n${attachBlock}` : prompt;
+  let ragOk = false;
+  const ragCtrl = new AbortController();
+  const ragTimeout = setTimeout(() => ragCtrl.abort(), 30_000);
+  try {
+    const ragResp = await fetch(new URL('/estimate', ragUrl), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: ragCtrl.signal,
+      body: JSON.stringify({ message: msgWithAttach, history: histMsgs, top_k: 20 })
+    });
+    if (ragResp.ok) {
+      const data = await ragResp.json();
+      const reply = (data.reply || '').trim();
+      if (reply) {
+        ragOk = true;
+        sseWrite(res, reply);
+      }
+    }
+  } catch (err) {
+    // fall through — AbortError or network error, ragOk stays false
+  } finally {
+    clearTimeout(ragTimeout);
+  }
+
+  if (!ragOk) {
+    const msgs = [
+      ...histMsgs,
+      { role: 'user', content: msgWithAttach }
+    ];
+    try {
+      const directive = await callClaude(msgs, controller.signal, CLAUDE_ESTIMATE_FALLBACK_SYSTEM);
+      const reply = directive.answer
+        || directive.summary
+        || (typeof directive === 'string' ? directive : '')
+        || (typeof directive === 'object' && directive !== null ? JSON.stringify(directive) : '');
+      if (reply) sseWrite(res, reply);
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        if (res.writable) { res.write('data: [DONE]\n\n'); res.end(); }
+        return;
+      }
+      sseWrite(res, '[Estimate service offline. Please try again shortly.]');
+    }
+  }
+
+  if (res.writable) { res.write('data: [DONE]\n\n'); res.end(); }
+}
+
 async function handleChat(req, res) {
   try {
     const { prompt, mode = 'ask', history = [], attachments = [] } = await readJsonBody(req);
@@ -2863,9 +2926,8 @@ async function handleChat(req, res) {
     const ctxBlock = `\n\n--- LIVE DASHBOARD CONTEXT ---\n${dashCtx}\n--- END CONTEXT ---`;
 
     const systemPrompts = {
-      ask:  CLAUDE_ASK_SYSTEM  + ctxBlock,
-      build: CLAUDE_ARCHITECT_SYSTEM + ctxBlock,
-      ops:   CLAUDE_OPS_SYSTEM + ctxBlock,
+      ask: CLAUDE_ASK_SYSTEM + ctxBlock,
+      ops: CLAUDE_OPS_SYSTEM + ctxBlock,
     };
     const system = systemPrompts[mode] || systemPrompts.ask;
 
@@ -2900,6 +2962,12 @@ async function handleChat(req, res) {
     // SUPERPOWERS → full Claude Code CLI session, direct file access
     if (mode === 'claude-code') {
       await handleClaudeCodeSession(res, controller, prompt.trim(), histMsgs, attachBlock, folderPaths);
+      return;
+    }
+
+    // ESTIMATE → RAG estimate endpoint with extended context and timeout
+    if (mode === 'estimate') {
+      await handleEstimateMode(res, controller, prompt.trim(), histMsgs, attachBlock);
       return;
     }
 
@@ -3055,7 +3123,9 @@ const ALLOWED_ORIGINS = [
   'https://homelab-noc-dashboard.vercel.app',
   'https://carterspc.tailf72e3f.ts.net',
   'http://localhost:5173',
+  'http://localhost:5174',  // maverick-assistant dev
   'http://localhost:3011',
+  'http://localhost:3012',  // maverick-assistant prod
 ];
 
 const server = http.createServer(async (req, res) => {
