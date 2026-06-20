@@ -6122,14 +6122,18 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   .mapPage { grid-template-columns: 1fr !important; gap: 10px !important; }
   .mapPanel, .portPanel { min-height: unset !important; }
 
-  /* Network topology: panel is the scroll container; overflow:hidden on .panel clips children */
-  .mapPanel > .panel {
+  /* Network topology: panel.mapPanel IS the scroll container (Panel renders as <section class="panel mapPanel">) */
+  .panel.mapPanel {
     overflow-x: auto !important;
     overflow-y: hidden !important;
     -webkit-overflow-scrolling: touch !important;
-    padding: 12px 0 12px 12px !important;
+    padding: 12px !important;
   }
-  .topologyCanvas { min-width: 700px !important; }
+  .topologyCanvas {
+    overflow: visible !important; /* let the panel above clip, not the canvas */
+    min-width: 640px !important;
+    height: 560px !important;    /* endpoint nodes sit at top:440px + ~82px height */
+  }
 
   /* Port rows: drop the rate column on narrow screens */
   .portRow { grid-template-columns: 44px 1fr 60px !important; }

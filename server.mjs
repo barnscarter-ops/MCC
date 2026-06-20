@@ -2858,21 +2858,36 @@ async function handleEstimateMode(res, controller, prompt, histMsgs, attachBlock
   const msgWithAttach = attachBlock ? `${prompt}\n\n${attachBlock}` : prompt;
   let ragOk = false;
   const ragCtrl = new AbortController();
-  const ragTimeout = setTimeout(() => ragCtrl.abort(), 30_000);
+  const ragTimeout = setTimeout(() => ragCtrl.abort(), 90_000);
   try {
-    const ragResp = await fetch(new URL('/estimate', ragUrl), {
+    const ragResp = await fetch(new URL('/estimate-stream', ragUrl), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       signal: ragCtrl.signal,
       body: JSON.stringify({ message: msgWithAttach, history: histMsgs, top_k: 20 })
     });
     if (ragResp.ok) {
-      const data = await ragResp.json();
-      const reply = (data.reply || '').trim();
-      if (reply) {
-        ragOk = true;
-        sseWrite(res, reply);
+      const reader = ragResp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let hasContent = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') { ragOk = true; break; }
+          try {
+            const tok = JSON.parse(raw);
+            if (tok.delta) { sseWrite(res, tok.delta); hasContent = true; }
+          } catch {}
+        }
       }
+      if (hasContent) ragOk = true;
     }
   } catch (err) {
     // fall through — AbortError or network error, ragOk stays false
@@ -3330,31 +3345,36 @@ const server = http.createServer(async (req, res) => {
           return (visionData.content?.[0]?.text || '[no content returned]').slice(0, 32000);
         }
 
-        // Text-based PDF — score chunks by electrical keyword density
-        const ELEC = ['electrical','gfci','afci','arc-fault','arc fault','panel','breaker','circuit','wiring','outlet','receptacle','switch','bonding','grounding','licensed electrician','deficien','smoke alarm','smoke detector'];
-        const score = t => { const l = t.toLowerCase(); return ELEC.reduce((n, kw) => n + (l.includes(kw) ? 1 : 0), 0); };
-
-        // Prefer form-feed page breaks; fall back to sliding window for PDFs without them
-        let pages = raw.split('\f').filter(p => p.trim());
-        if (pages.length <= 1) {
-          // No form feeds — chunk into 2000-char windows with 200-char overlap
-          const CHUNK = 2000, STEP = 1800;
-          pages = [];
-          for (let i = 0; i < raw.length; i += STEP) pages.push(raw.slice(i, i + CHUNK));
+        // Primary: find the ELECTRICAL SYSTEMS section header directly (works for TREC and most inspection reports)
+        const elecMatch = /\bELECTRICAL\s+SYSTEMS?\b/i.exec(raw);
+        if (elecMatch) {
+          const start = elecMatch.index;
+          // Find the next major section after electrical
+          const nextSection = /\n(?:[IVX]{2,}\.[ \t]|(?:HEATING|HVAC|PLUMBING|APPLIANCE|OPTIONAL|ADDITIONAL INFO))/i.exec(raw.slice(start + 200));
+          const end = nextSection ? start + 200 + nextSection.index : raw.length;
+          return raw.slice(start, end).slice(0, 32000);
         }
 
+        // Fallback: keyword density scoring on form-feed pages or sliding window
+        const ELEC = ['electrical','gfci','afci','arc-fault','arc fault','panel','breaker','circuit','wiring','outlet','receptacle','switch','bonding','grounding','licensed electrician','deficien','smoke alarm','smoke detector'];
+        const score = t => { const l = t.toLowerCase(); return ELEC.reduce((n, kw) => n + (l.includes(kw) ? 1 : 0), 0); };
+        let pages = raw.split('\f').filter(p => p.trim());
+        if (pages.length <= 1) {
+          const STEP = 1800;
+          pages = [];
+          for (let i = 0; i < raw.length; i += STEP) pages.push(raw.slice(i, i + 2000));
+        }
         const scored = pages.map((t, i) => ({ i, t, s: score(t) }));
-        // Preamble chunks always score high (boilerplate mentions every keyword) — skip first 10% of chunks
         const skip = Math.floor(pages.length * 0.1);
         const hot = scored.filter(p => p.i >= skip && p.s >= 2);
         if (hot.length === 0) return raw.slice(0, 32000);
         const keep = new Set();
         hot.forEach(p => { keep.add(p.i - 1); keep.add(p.i); keep.add(p.i + 1); });
-        const extracted = [...keep].sort((a, b) => a - b)
+        return [...keep].sort((a, b) => a - b)
           .filter(i => i >= 0 && i < pages.length)
           .map(i => pages[i].trim())
-          .join('\n\n');
-        return extracted.slice(0, 32000);
+          .join('\n\n')
+          .slice(0, 32000);
       }
 
       if (filePath) {
