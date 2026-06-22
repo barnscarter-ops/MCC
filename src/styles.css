@@ -5622,11 +5622,20 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
 .internet       { top: 110px !important; min-height: 62px !important; }
 .router         { top: 196px !important; min-height: 68px !important; }
 .switch         { top: 292px !important; min-height: 110px !important; }
-/* Endpoint nodes: 170px wide, percentage centers match SVG x=20.5%/50%/79.5% */
-.workstationNode, .serverNode, .meshNode { width: 170px !important; }
-.workstationNode { top: 440px !important; left:  calc(20.5% - 85px) !important; }
-.serverNode      { top: 440px !important; right: calc(20.5% - 85px) !important; }
-.meshNode        { top: 440px !important; bottom: auto !important; left: calc(50% - 85px) !important; }
+/* Endpoint nodes: 170px wide, percentage centers match SVG x=20.5%/50%/79.5%.
+   transform:none kills an older mobile rule's translateX(-50%) stacking hack (which
+   shifted every node 85px left and clipped Workstation off-screen). The explicit
+   left/right:auto stop that same rule's `left:50%` from leaking onto the nodes and
+   over-constraining them — when both left and right are set on an absolutely-
+   positioned element the browser drops `right`, which silently parked Server at 50%
+   (on top of Mesh) instead of its 79.5% anchor. */
+.workstationNode, .serverNode, .meshNode {
+  width: 170px !important;
+  transform: none !important;
+}
+.workstationNode { top: 440px !important; left:  calc(20.5% - 85px) !important; right: auto !important; }
+.serverNode      { top: 440px !important; right: calc(20.5% - 85px) !important; left:  auto !important; }
+.meshNode        { top: 440px !important; bottom: auto !important; left: calc(50% - 85px) !important; right: auto !important; }
 /* Mobile: scroll rather than crush */
 @media (max-width: 640px) {
   .topologyCanvas { overflow-x: auto !important; min-width: 620px !important; }
