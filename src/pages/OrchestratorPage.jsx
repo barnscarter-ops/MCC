@@ -18,9 +18,7 @@ import {
   api,
   createLocalWorkerBrief,
   createOrchestratorPlan,
-  createTaskRun,
   queryMemory,
-  updateTaskRun
 } from '../lib/api.js';
 import { useOrchestratorStatus } from '../hooks/useMetrics.js';
 
@@ -258,20 +256,11 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
   const [idea, setIdea] = useState('Build an app with my standard tech stack that tells me where the closest ice cream shop is when it is 100 degrees outside.');
   const [activeRun, setActiveRun] = useState(null);
   const [workerBrief, setWorkerBrief] = useState(null);
-  const [taskRuns, setTaskRuns] = useState([]);
   const [memoryContext, setMemoryContext] = useState({ state: 'loading', memories: [], results: [], typeCounts: {}, warnings: [] });
   const [busy, setBusy] = useState(false);
   const [briefBusyId, setBriefBusyId] = useState(null);
-  const [reviewBusyId, setReviewBusyId] = useState(null);
   const [error, setError] = useState(null);
-  // ponytail: dismissals are local state only — server re-sends all runs on refresh.
-  const [dismissedIds, setDismissedIds] = useState(new Set());
-  function dismissRun(id) { setDismissedIds(prev => new Set([...prev, id])); }
   const run = activeRun || orchestratorStatus.runs?.[0] || null;
-
-  useEffect(() => {
-    setTaskRuns(orchestratorStatus.taskRuns || []);
-  }, [orchestratorStatus.taskRuns]);
 
   useEffect(() => {
     let cancelled = false;
@@ -316,33 +305,6 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
       setError(nextError.message);
     } finally {
       setBriefBusyId(null);
-    }
-  }
-
-  async function handleTaskRun(task) {
-    setBriefBusyId(task.id);
-    setError(null);
-    try {
-      const next = await createTaskRun(run.idea, task, 'brief');
-      setTaskRuns((current) => [next, ...current.filter((item) => item.id !== next.id)]);
-      setWorkerBrief({ task, brief: next.output || next.error || 'Task run completed without output.', createdAt: next.finishedAt, ledgerRun: next });
-    } catch (nextError) {
-      setError(nextError.message);
-    } finally {
-      setBriefBusyId(null);
-    }
-  }
-
-  async function handleRunStatus(id, patch) {
-    setReviewBusyId(id);
-    setError(null);
-    try {
-      const next = await updateTaskRun(id, patch);
-      setTaskRuns((current) => current.map((item) => item.id === id ? next : item));
-    } catch (nextError) {
-      setError(nextError.message);
-    } finally {
-      setReviewBusyId(null);
     }
   }
 
@@ -403,14 +365,7 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
                     disabled={task.worker !== 'local-qwen' || briefBusyId === task.id}
                     onClick={() => handleBrief(task)}
                   >
-                    Brief
-                  </button>
-                  <button
-                    type="button"
-                    disabled={task.worker !== 'local-qwen' || briefBusyId === task.id}
-                    onClick={() => handleTaskRun(task)}
-                  >
-                    {briefBusyId === task.id ? 'Running...' : 'Run + Log'}
+                    {briefBusyId === task.id ? 'Running...' : 'Brief'}
                   </button>
                 </div>
               ))}
@@ -421,53 +376,6 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
           </>
         ) : (
           <div className="emptyPlan">No run yet. Create a plan to route work across local and hosted workers.</div>
-        )}
-      </Panel>
-
-      <Panel title="TASK LEDGER" className="ledgerPanel">
-        {taskRuns.filter(r => !dismissedIds.has(r.id)).length ? (
-          <div className="ledgerList">
-            {taskRuns.filter(r => !dismissedIds.has(r.id)).slice(0, 8).map((taskRun) => (
-              <div className="ledgerRow" key={taskRun.id}>
-                <div>
-                  <strong>{taskRun.taskTitle}</strong>
-                  <span>{workerLabel(taskRun.worker)} / {taskRun.status}</span>
-                  <em>{taskRun.changedFiles?.length ? taskRun.changedFiles.join(', ') : 'No changed files captured yet'}</em>
-                  {taskRun.diffStat ? <code>{taskRun.diffStat}</code> : null}
-                </div>
-                <div className="ledgerBadges">
-                  <span>{taskRun.reviewStatus}</span>
-                  <span>{taskRun.deployStatus}</span>
-                </div>
-                <div className="ledgerActions">
-                  <button
-                    type="button"
-                    disabled={reviewBusyId === taskRun.id || taskRun.reviewStatus === 'approved'}
-                    onClick={() => handleRunStatus(taskRun.id, { reviewStatus: 'approved', status: 'approved', deployStatus: 'ready' })}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    disabled={reviewBusyId === taskRun.id || taskRun.deployStatus === 'deployed'}
-                    onClick={() => handleRunStatus(taskRun.id, { deployStatus: 'deployed', status: 'deployed' })}
-                  >
-                    Deployed
-                  </button>
-                  <button
-                    type="button"
-                    className="ledgerDismissBtn"
-                    onClick={() => dismissRun(taskRun.id)}
-                    title="Dismiss"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="emptyPlan">No task runs logged yet. Use Run + Log to create the first audit record.</div>
         )}
       </Panel>
 
