@@ -1316,9 +1316,21 @@ body {
 
 .ledgerActions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr 1fr auto;
   gap: 6px;
 }
+
+.ledgerDismissBtn {
+  background: transparent !important;
+  border: 1px solid rgba(255,255,255,.15) !important;
+  color: var(--muted) !important;
+  box-shadow: none !important;
+  font-size: 16px !important;
+  line-height: 1 !important;
+  padding: 4px 8px !important;
+  border-radius: 3px !important;
+}
+.ledgerDismissBtn:hover { border-color: var(--red) !important; color: var(--red) !important; }
 
 .ledgerActions button {
   border: 1px solid rgba(102, 212, 255, .40);

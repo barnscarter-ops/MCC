@@ -264,6 +264,9 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
   const [briefBusyId, setBriefBusyId] = useState(null);
   const [reviewBusyId, setReviewBusyId] = useState(null);
   const [error, setError] = useState(null);
+  // ponytail: dismissals are local state only — server re-sends all runs on refresh.
+  const [dismissedIds, setDismissedIds] = useState(new Set());
+  function dismissRun(id) { setDismissedIds(prev => new Set([...prev, id])); }
   const run = activeRun || orchestratorStatus.runs?.[0] || null;
 
   useEffect(() => {
@@ -422,9 +425,9 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
       </Panel>
 
       <Panel title="TASK LEDGER" className="ledgerPanel">
-        {taskRuns.length ? (
+        {taskRuns.filter(r => !dismissedIds.has(r.id)).length ? (
           <div className="ledgerList">
-            {taskRuns.slice(0, 8).map((taskRun) => (
+            {taskRuns.filter(r => !dismissedIds.has(r.id)).slice(0, 8).map((taskRun) => (
               <div className="ledgerRow" key={taskRun.id}>
                 <div>
                   <strong>{taskRun.taskTitle}</strong>
@@ -451,6 +454,14 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
                   >
                     Deployed
                   </button>
+                  <button
+                    type="button"
+                    className="ledgerDismissBtn"
+                    onClick={() => dismissRun(taskRun.id)}
+                    title="Dismiss"
+                  >
+                    ×
+                  </button>
                 </div>
               </div>
             ))}
@@ -460,16 +471,12 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
         )}
       </Panel>
 
-      <Panel title="LOCAL WORKER BRIEF" className="briefPanel">
-        {workerBrief ? (
-          <>
-            <div className="briefTask">{workerBrief.task.title}</div>
-            <pre>{workerBrief.brief}</pre>
-          </>
-        ) : (
-          <div className="emptyPlan">Select a local Qwen task brief after planning.</div>
-        )}
-      </Panel>
+      {workerBrief && (
+        <Panel title="LOCAL WORKER BRIEF" className="briefPanel">
+          <div className="briefTask">{workerBrief.task.title}</div>
+          <pre>{workerBrief.brief}</pre>
+        </Panel>
+      )}
 
       {(error || orchestratorStatus.error) ? <div className="errorStrip">{error || orchestratorStatus.error}</div> : null}
     </div>
