@@ -449,10 +449,10 @@ export function NetworkMapPage({ metrics }) {
       <Panel title="PORT MAP" className="portPanel">
         <div className="portRows">
           {[
-            ['24', 'Gateway Router', 'ACTIVE', formatPortRate(metrics.switchPort24Rx, metrics.switchPort24Tx)],
-            ['1', 'Proxmox Server', serverOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort1Rx, metrics.switchPort1Tx)],
-            ['2', 'x25 Deco Mesh', 'ACTIVE', formatPortRate(metrics.switchPort2Rx, metrics.switchPort2Tx)],
-            ['3', 'Workstation', pcOnline ? 'ACTIVE' : 'DOWN', formatPortRate(metrics.switchPort3Rx, metrics.switchPort3Tx)],
+            ['24', 'Gateway Router', 'ACTIVE', formatPortRate(metrics.switchPort24Rx, metrics.switchPort24Tx, '1 Gb link')],
+            ['1', 'Proxmox Server', serverOnline ? 'ACTIVE' : 'DOWN', serverOnline ? formatPortRate(metrics.switchPort1Rx, metrics.switchPort1Tx, '2.5 Gb link') : '—'],
+            ['2', 'x25 Deco Mesh', 'ACTIVE', formatPortRate(metrics.switchPort2Rx, metrics.switchPort2Tx, '1 Gb link')],
+            ['3', 'Workstation', pcOnline ? 'ACTIVE' : 'DOWN', pcOnline ? formatPortRate(metrics.switchPort3Rx, metrics.switchPort3Tx, '2.5 Gb link') : '—'],
             ['4-22', 'Available', 'IDLE', '-']
           ].map(([port, device, state, rate]) => (
             <div className="portRow" key={port}>

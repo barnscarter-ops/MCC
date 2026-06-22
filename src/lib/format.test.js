@@ -73,9 +73,10 @@ describe('formatMbps', () => {
 });
 
 describe('formatPortRate', () => {
-  it('returns WAITING for non-finite values', () => {
-    expect(formatPortRate(NaN, NaN)).toBe('WAITING');
-    expect(formatPortRate(0, 0)).not.toBe('WAITING');
+  it('falls back when both values are non-finite', () => {
+    expect(formatPortRate(NaN, NaN)).toBe('LINK UP');                    // default fallback
+    expect(formatPortRate(NaN, NaN, '2.5 Gb link')).toBe('2.5 Gb link'); // custom fallback
+    expect(formatPortRate(0, 0)).not.toBe('LINK UP');                    // zero is live data, not a fallback
   });
 
   it('formats rx/tx rates correctly', () => {

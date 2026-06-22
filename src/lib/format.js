@@ -22,8 +22,12 @@ export function formatMbps(value) {
   return '0M';
 }
 
-export function formatPortRate(rx, tx) {
-  if (!Number.isFinite(rx) && !Number.isFinite(tx)) return 'WAITING';
+// When no live throughput metric is available (e.g. the switch has no per-port
+// traffic exporter), show `fallback` instead of a perpetual "WAITING". Callers only
+// reach this with an up link, so the default reads "LINK UP"; the port map passes the
+// negotiated link speed so the column still carries real information.
+export function formatPortRate(rx, tx, fallback = 'LINK UP') {
+  if (!Number.isFinite(rx) && !Number.isFinite(tx)) return fallback;
   return `D ${formatMbps(rx)} / U ${formatMbps(tx)}`;
 }
 

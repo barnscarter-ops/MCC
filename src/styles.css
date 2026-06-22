@@ -2707,13 +2707,9 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .homeHero,
-  .workflowPanel,
-  .agentFleetPanel,
-  .reportsPanel,
-  .actionsPanel,
-  .faultPanel,
-  .recentTaskPanel {
+  /* Reset every homePage panel to a single stacked column. Selector targets all
+     direct children so it can't drift out of date as panels are renamed. */
+  .homePage > * {
     grid-column: auto;
   }
 
@@ -5618,10 +5614,16 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   .mapPanel       { min-height: 520px !important; }
   .portPanel      { min-height: auto !important; }
 }
-.isp            { top: 12px !important; }
-.internet       { top: 110px !important; min-height: 62px !important; }
-.router         { top: 196px !important; min-height: 68px !important; }
-.switch         { top: 292px !important; min-height: 110px !important; }
+/* Node tops are percentages of the canvas height so they track the SVG flow lines
+   at ANY canvas height. The mapLines SVG uses viewBox 0 0 1000 640 with
+   preserveAspectRatio:none, so its y-units stretch to the canvas height; a fixed-px
+   top only lines up at one specific height (780px desktop). Each % below is the
+   original desktop pixel ÷ 780, so 780px renders identically while 480/560px mobile
+   canvases now align too. */
+.isp            { top: 1.54% !important; }
+.internet       { top: 14.10% !important; min-height: 62px !important; }
+.router         { top: 25.13% !important; min-height: 68px !important; }
+.switch         { top: 37.44% !important; min-height: 110px !important; }
 /* Endpoint nodes: 170px wide, percentage centers match SVG x=20.5%/50%/79.5%.
    transform:none kills an older mobile rule's translateX(-50%) stacking hack (which
    shifted every node 85px left and clipped Workstation off-screen). The explicit
@@ -5633,9 +5635,9 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   width: 170px !important;
   transform: none !important;
 }
-.workstationNode { top: 440px !important; left:  calc(20.5% - 85px) !important; right: auto !important; }
-.serverNode      { top: 440px !important; right: calc(20.5% - 85px) !important; left:  auto !important; }
-.meshNode        { top: 440px !important; bottom: auto !important; left: calc(50% - 85px) !important; right: auto !important; }
+.workstationNode { top: 56.41% !important; left:  calc(20.5% - 85px) !important; right: auto !important; }
+.serverNode      { top: 56.41% !important; right: calc(20.5% - 85px) !important; left:  auto !important; }
+.meshNode        { top: 56.41% !important; bottom: auto !important; left: calc(50% - 85px) !important; right: auto !important; }
 /* Mobile: scroll rather than crush */
 @media (max-width: 640px) {
   .topologyCanvas { overflow-x: auto !important; min-width: 620px !important; }
@@ -6182,12 +6184,14 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   .topologyCanvas {
     overflow: visible !important; /* let the panel above clip, not the canvas */
     min-width: 640px !important;
-    height: 560px !important;    /* endpoint nodes sit at top:440px + ~82px height */
+    height: 560px !important;    /* node tops are %-based, so they align at this height too */
   }
 
   /* Port rows: drop the rate column on narrow screens */
-  .portRow { grid-template-columns: 44px 1fr 60px !important; }
-  .portRow b { display: none !important; }
+  /* Keep the rate column on mobile — it now shows the link speed when no live
+     throughput is available, so it carries real info instead of "WAITING". */
+  .portRow { grid-template-columns: 36px minmax(0, 1fr) auto auto !important; gap: 6px !important; }
+  .portRow b { font-size: 11px !important; }
 }
 
 /* ── MCC feature additions ───────────────────────────────────────────────── */
