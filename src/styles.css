@@ -3516,7 +3516,7 @@ body {
 }
 
 .chatHistory {
-  max-height: 220px;
+  max-height: 300px;
   overflow-y: auto;
   padding: 8px 14px 4px;
   display: flex;
@@ -4561,11 +4561,8 @@ body {
     gap: 6px;
   }
 
-  /* Hide the SVG topology map — too complex to render on phone */
-  .hardwareNetworkMapPanel,
-  .hardwareTopology {
-    display: none !important;
-  }
+  /* Mini network map stays visible on phones — the 640px block below makes the
+     panel scroll horizontally so the topology renders without crushing. */
 
   /* Worker grid — single column */
   .workerGrid {
@@ -6063,29 +6060,55 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   .sidebarNavItem.active { box-shadow: inset 0 3px 0 var(--r-ac) !important; }
   .sidebarNavBadge { top: 5px !important; right: calc(50% - 12px) !important; }
 
-  /* Main: clear the bottom nav + command bar */
+  /* Main: clear the bottom nav + command bar. No side padding here — the
+     pageWrapper supplies a slim gutter so panels fill the screen width. */
   .dashboard {
     width: 100% !important;
-    padding: 12px 10px 140px !important;
+    padding: 0 0 140px !important;
+  }
+  .pageWrapper {
+    padding: 14px 12px 24px !important;
   }
 
-  /* Command bar: ride above the nav bar */
+  /* Command bar: PINNED to the bottom above the nav bar. position:fixed overrides
+     the desktop sticky rule so the bar stays flush against the nav with no black gap
+     below it, and full-bleed left/right reclaims the side gutters. .dashboard's 140px
+     bottom padding keeps page content clear of the bar. */
   .commandBar {
+    position: fixed !important;
     bottom: 56px !important;
-    padding: 8px 12px !important;
+    padding: 0 !important;
   }
-  .workflowStrip { overflow-x: auto !important; gap: 4px !important; flex-wrap: nowrap !important; }
+  /* Taller response area — read answers without expanding the chat. */
+  .chatHistory {
+    max-height: 42vh !important;
+    padding: 8px 10px 4px !important;
+  }
+  /* Mode buttons: a small, single, compact scrollable row. They're pressed once, so
+     they give up vertical space. Each sizes to its label (flex:0 0 auto) and the row
+     scrolls horizontally; one tap selects — no hover or two-step dropdown. */
+  .workflowStrip {
+    overflow-x: auto !important;
+    gap: 4px !important;
+    flex-wrap: nowrap !important;
+    padding: 6px 10px 5px !important;
+  }
   .workflowBtn {
+    flex: 0 0 auto !important;
     font-size: 9px !important;
-    padding: 5px 8px !important;
+    padding: 4px 9px !important;
+    /* ponytail: 30px overrides the global 36px touch floor for these secondary,
+       pressed-once mode chips so they read as compact. Still a usable tap target;
+       don't drop below ~30px or quick taps start missing. */
+    min-height: 30px !important;
     white-space: nowrap !important;
     letter-spacing: .02em !important;
   }
   .workflowBtn[data-tooltip]::before,
   .workflowBtn[data-tooltip]::after { display: none !important; }
-  .expandChatBtn { font-size: 9px !important; padding: 5px 8px !important; flex-shrink: 0 !important; }
+  .expandChatBtn { font-size: 9px !important; padding: 4px 9px !important; min-height: 30px !important; flex-shrink: 0 !important; }
   .modelRouteBadge { display: none !important; }
-  .chatForm { gap: 5px !important; }
+  .chatForm { gap: 5px !important; padding: 8px 10px 9px !important; }
 
   /* ── Home page ── */
   .homeHeroGrid { grid-template-columns: repeat(2, 1fr) !important; }
@@ -6114,6 +6137,9 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   .modelOpsGrid { grid-template-columns: 1fr !important; }
   .modelMetaGrid { grid-template-columns: repeat(2, 1fr) !important; }
   .aiRuntimeGrid { grid-template-columns: 1fr !important; }
+  /* Service chips: 5 across overflows a phone — drop to 2 columns. minmax(0,1fr)
+     lets each chip shrink instead of forcing min-content width and clipping. */
+  .serviceList { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 
   /* Hardware network map: panel itself must scroll (parent overflow:hidden clips children) */
   .hardwareGrid > .panel.network {
