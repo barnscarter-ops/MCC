@@ -6394,3 +6394,67 @@ code, pre, .gaugeValue, .gaugeLabel, .gaugeSub, .panelTitle,
   box-shadow: 0 0 12px rgba(107, 158, 216, .22), inset 0 0 10px rgba(59, 103, 168, .06);
   text-shadow: 0 0 8px rgba(107, 158, 216, .7);
 }
+
+/* ── Voice Panel ─────────────────────────────────────── */
+.voiceCallBtn {
+  background: rgba(0, 200, 80, 0.1);
+  border: 1px solid rgba(0, 200, 80, 0.25);
+  color: rgba(0, 220, 100, 0.85);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  font-family: inherit;
+}
+.voiceCallBtn:hover { background: rgba(0, 200, 80, 0.2); }
+.voiceCallBtn.active {
+  background: rgba(0, 200, 80, 0.25);
+  border-color: rgba(0, 220, 100, 0.5);
+  color: #00ff88;
+}
+.voicePanel {
+  background: rgba(0, 40, 20, 0.85);
+  border: 1px solid rgba(0, 200, 80, 0.3);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.voicePanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(0, 200, 80, 0.08);
+  border-bottom: 1px solid rgba(0, 200, 80, 0.15);
+}
+.voicePanelStatus { font-size: 12px; color: rgba(0, 220, 100, 0.9); letter-spacing: 0.05em; }
+.voicePanelStatus[data-status="listening"] { color: #00ff88; animation: pulse 1.2s infinite; }
+.voicePanelStatus[data-status="speaking"] { color: #88ddff; }
+.voicePanelStatus[data-status="error"] { color: #ff6060; }
+.voicePanelClose {
+  background: rgba(255,80,80,0.15);
+  border: 1px solid rgba(255,80,80,0.3);
+  color: rgba(255,120,120,0.9);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  font-family: inherit;
+}
+.voicePanelClose:hover { background: rgba(255,80,80,0.3); }
+.voiceTranscript {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.voiceHint { color: rgba(255,255,255,0.35); font-size: 12px; text-align: center; padding: 16px 0; }
+.voiceLine { display: flex; gap: 8px; align-items: flex-start; }
+.voiceRole { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; padding-top: 2px; min-width: 28px; }
+.voiceLine.user .voiceRole { color: rgba(100,200,255,0.7); }
+.voiceLine.assistant .voiceRole { color: rgba(0,220,100,0.7); }
+.voiceText { font-size: 13px; color: rgba(255,255,255,0.85); line-height: 1.45; }

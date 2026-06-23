@@ -210,6 +210,85 @@ const server = http.createServer(async (req, res) => {
     handleListDirs(req, res);
     return;
   }
+  if (url.pathname === '/api/realtime-token' && req.method === 'POST') {
+    try {
+      // OPENAI_REALTIME_KEY must be a real OpenAI key (not a LiteLLM proxy key)
+      const realtimeKey = process.env.OPENAI_REALTIME_KEY || process.env.OPENAI_API_KEY;
+      const r = await fetch('https://api.openai.com/v1/realtime/sessions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${realtimeKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-realtime-preview-2024-12-17',
+          voice: 'echo',
+          instructions: `You are Maverick, an AI assistant for Grizzly Electric, an electrical contracting company in the Dallas/Fort Worth area. You have a confident, direct tone — knowledgeable and efficient, like a senior project manager.
+
+You help with: scoping electrical jobs (outlets, panels, lighting, conduit runs, circuits), looking up customers and job history, getting pricing for electrical services, and general contracting questions.
+
+This is a voice interface — keep responses concise and conversational. Say numbers and prices clearly. When you use a tool to look something up, briefly confirm what you found before using the data. Don't read out long lists — summarize the key points.`,
+          tools: [
+            {
+              type: 'function',
+              name: 'search_pricebook',
+              description: 'Search the pricebook for electrical service items, materials, labor, and pricing',
+              parameters: {
+                type: 'object',
+                properties: { query: { type: 'string', description: 'Search query for the pricebook' } },
+                required: ['query']
+              }
+            },
+            {
+              type: 'function',
+              name: 'find_customer',
+              description: 'Find a customer by name, email, phone number, or address',
+              parameters: {
+                type: 'object',
+                properties: { query: { type: 'string', description: 'Customer name, email, phone, or address' } },
+                required: ['query']
+              }
+            },
+            {
+              type: 'function',
+              name: 'get_job_history',
+              description: 'Get job history, estimates, and invoices for a customer or address',
+              parameters: {
+                type: 'object',
+                properties: { query: { type: 'string', description: 'Customer name or address' } },
+                required: ['query']
+              }
+            }
+          ],
+          turn_detection: { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 600 },
+        }),
+      });
+      const data = await r.json();
+      if (r.ok && data.client_secret?.value) {
+        sendJson(res, 200, { token: data.client_secret.value });
+      } else {
+        sendJson(res, 500, { error: 'Failed to create session', detail: data });
+      }
+    } catch (e) {
+      sendJson(res, 500, { error: e.message });
+    }
+    return;
+  }
+  if (url.pathname === '/api/rag-voice-query' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const r = await fetch(new URL('/ask', ragUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ question: body.query || '', history: [] }),
+      });
+      const data = await r.json();
+      sendJson(res, 200, { answer: data.answer || 'No results found.' });
+    } catch (e) {
+      sendJson(res, 500, { error: e.message });
+    }
+    return;
+  }
   if (url.pathname === '/health') {
     send(res, 200, 'ok\n');
     return;

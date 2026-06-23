@@ -4,6 +4,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Panel } from '../components/Dashboard.jsx';
 import { MavMarkdown } from '../mavUtils.js';
+import { VoicePanel } from '../components/VoicePanel.jsx';
 import {
   MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
@@ -104,6 +105,7 @@ export function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onC
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef(null);
   const [showJobHistory, setShowJobHistory] = useState(false);
+  const [showVoicePanel, setShowVoicePanel] = useState(false);
 
   function toggleVoice() {
     if (isListening) {
@@ -239,6 +241,7 @@ export function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onC
           busy={busy}
         />
       )}
+      {showVoicePanel && <VoicePanel onClose={() => setShowVoicePanel(false)} />}
       <form className="chatSessionForm" onSubmit={onSubmit}>
         <textarea
           className="chatSessionInput"
@@ -255,6 +258,7 @@ export function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onC
           <button type="button" className={`micBtn${isListening ? ' active' : ''}`} onClick={toggleVoice} disabled={busy} title="Voice input">
             {isListening ? '⏹' : '🎤'}
           </button>
+          <button type="button" className={`voiceCallBtn${showVoicePanel ? ' active' : ''}`} onClick={() => setShowVoicePanel(v => !v)} title="Live voice mode">🎙 VOICE</button>
           <button type="button" className="jobHistoryBtn" onClick={() => setShowJobHistory(v => !v)} title="Saved jobs">📋</button>
           {busy
             ? <button type="button" className="stopBtn" onClick={onStop}>[ STOP ]</button>
