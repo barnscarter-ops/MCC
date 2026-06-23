@@ -22,6 +22,7 @@ module.exports = {
         MAV_EXTRA_ROOTS: process.env.MAV_EXTRA_ROOTS || '',
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      windowsHide: true,
     },
     {
       name: 'prometheus-sync',
@@ -34,6 +35,7 @@ module.exports = {
       restart_delay: 3000,
       env_file: 'C:\\Workspace\\Active\\SEO-Agents-App\\.env',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      windowsHide: true,
     },
     {
       name: 'downloads-watcher',
@@ -45,6 +47,7 @@ module.exports = {
       max_restarts: 10,
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      windowsHide: true,
     },
     {
       name: 'mav-bridge',
@@ -57,6 +60,7 @@ module.exports = {
       restart_delay: 5000,
       env_file: 'C:\\Workspace\\Active\\SEO-Agents-App\\.env',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      windowsHide: true,
     },
   ]
 };

@@ -78,7 +78,26 @@ export function MccJobHistoryPanel({ onRestore, onClose }) {
   );
 }
 
-export function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse, onStop, onClear, onRestoreJob, workflowMode, setWorkflowMode, attachedFiles, onAddFiles, onRemoveFile, permanent }) {
+export function EstimateConfirmBar({ estimate, onBuild, onClear, busy }) {
+  const items = estimate?.items || [];
+  const customer = estimate?.customer;
+  return (
+    <div className="estimateConfirmBar">
+      <span className="estimateConfirmInfo">
+        📋 <strong>{items.length} item{items.length !== 1 ? 's' : ''}</strong> ready to push
+        {customer?.name ? ` — ${customer.name}` : ''}
+      </span>
+      <div className="estimateConfirmActions">
+        <button className="estimateConfirmClear" onClick={onClear} disabled={busy} type="button">✕</button>
+        <button className="estimateConfirmBuild" onClick={onBuild} disabled={busy} type="button">
+          {busy ? 'Creating…' : '⚡ BUILD IT'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onCollapse, onStop, onClear, onRestoreJob, workflowMode, setWorkflowMode, attachedFiles, onAddFiles, onRemoveFile, permanent, pendingEstimate, onBuildEstimate, onClearPendingEstimate }) {
   const historyRef = useRef(null);
   const rafRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -97,11 +116,14 @@ export function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onC
     const rec = new SR();
     rec.continuous = true;
     rec.interimResults = true;
+    let silenceTimer = null;
     rec.onresult = e => {
+      clearTimeout(silenceTimer);
       const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
       setInput(transcript);
+      silenceTimer = setTimeout(() => rec.stop(), 3000);
     };
-    rec.onend = () => setIsListening(false);
+    rec.onend = () => { clearTimeout(silenceTimer); setIsListening(false); };
     recognitionRef.current = rec;
     rec.start();
     setIsListening(true);
@@ -208,6 +230,14 @@ export function ChatSessionPanel({ history, busy, input, setInput, onSubmit, onC
             </span>
           ))}
         </div>
+      )}
+      {pendingEstimate && (
+        <EstimateConfirmBar
+          estimate={pendingEstimate}
+          onBuild={onBuildEstimate}
+          onClear={onClearPendingEstimate}
+          busy={busy}
+        />
       )}
       <form className="chatSessionForm" onSubmit={onSubmit}>
         <textarea
@@ -325,6 +355,9 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
         attachedFiles={chatSession.attachedFiles}
         onAddFiles={chatSession.onAddFiles}
         onRemoveFile={chatSession.onRemoveFile}
+        pendingEstimate={chatSession.pendingEstimate}
+        onBuildEstimate={chatSession.onBuildEstimate}
+        onClearPendingEstimate={chatSession.onClearPendingEstimate}
       />
 
       <Panel title="MEMORY CONTEXT" className="memoryPanel">

@@ -11,7 +11,7 @@ import {
   Server,
   NetworkMapPage
 } from './pages/SystemPages.jsx';
-import { OrchestratorPage } from './pages/OrchestratorPage.jsx';
+import { OrchestratorPage, EstimateConfirmBar } from './pages/OrchestratorPage.jsx';
 import { HomePage } from './pages/HomePage.jsx';
 import SEOApprovalPage from './SEOApprovalPage.jsx';
 import { isDocumentResponse, MavMarkdown } from './mavUtils.js';
@@ -37,6 +37,7 @@ function App() {
   const [previewContent, setPreviewContent] = useState(null);
   const [attachedFiles, setAttachedFiles] = useState([]);
   const barFileInputRef = useRef(null);
+  const [pendingEstimate, setPendingEstimate] = useState(null);
 
 
   const activeMode = WORKFLOW_MODES.find(m => m.id === workflowMode) || WORKFLOW_MODES[0];
@@ -80,7 +81,84 @@ function App() {
       const response = await fetch(api('/api/chat'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: userMsg, mode: workflowMode, history: chatHistory, attachments: attachedFiles }),
+        body: JSON.stringify({
+          prompt: userMsg,
+          mode: workflowMode,
+          history: chatHistory,
+          attachments: attachedFiles,
+          ...(pendingEstimate && workflowMode === 'ask' ? { pendingItems: pendingEstimate.items, pendingCustomer: pendingEstimate.customer } : {}),
+        }),
+        signal: controller.signal
+      });
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') continue;
+          try {
+            const tok = JSON.parse(raw);
+            const delta = tok.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              accum += delta;
+              pushChat(prev => {
+                const next = [...prev];
+                next[next.length - 1] = { role: 'assistant', content: accum };
+                return next;
+              });
+            }
+          } catch {}
+        }
+      }
+      // Detect and strip [ESTIMATE_READY] block; set pendingEstimate state
+      const estMatch = accum.match(/\[ESTIMATE_READY\]([\s\S]*?)\[\/ESTIMATE_READY\]/);
+      if (estMatch) {
+        try {
+          setPendingEstimate(JSON.parse(estMatch[1]));
+          accum = accum.replace(/\s*\[ESTIMATE_READY\][\s\S]*?\[\/ESTIMATE_READY\]/, '').trimEnd();
+          pushChat(prev => {
+            const next = [...prev];
+            next[next.length - 1] = { role: 'assistant', content: accum };
+            return next;
+          });
+        } catch {}
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        pushChat(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: 'assistant', content: `[Error: ${err.message}]` };
+          return next;
+        });
+      }
+    } finally {
+      setChatBusy(false);
+      chatAbortRef.current = null;
+    }
+  }
+
+  async function handleBuildEstimate() {
+    if (!pendingEstimate?.items?.length || chatBusy) return;
+    const { items, customer = {} } = pendingEstimate;
+    setPendingEstimate(null);
+    setChatBusy(true);
+    setChatPanelOpen(true);
+    pushChat(prev => [...prev, { role: 'user', content: '⚡ Build estimate' }, { role: 'assistant', content: '' }]);
+    const controller = new AbortController();
+    chatAbortRef.current = controller;
+    let accum = '';
+    try {
+      const response = await fetch(api('/api/chat'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'Build estimate', mode: 'estimate-ready', lineItems: items, pendingCustomer: customer }),
         signal: controller.signal
       });
       const reader = response.body.getReader();
@@ -162,6 +240,9 @@ function App() {
               attachedFiles,
               onAddFiles: (items) => setAttachedFiles(prev => [...prev, ...items]),
               onRemoveFile: (i) => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i)),
+              pendingEstimate,
+              onBuildEstimate: handleBuildEstimate,
+              onClearPendingEstimate: () => setPendingEstimate(null),
             }}
           />
         )}
@@ -181,6 +262,14 @@ function App() {
         </div>{/* /pageWrapper */}
 
         {view !== 'orchestrator' && <div className="commandBar" style={{marginLeft: 0}}>
+          {pendingEstimate && (
+            <EstimateConfirmBar
+              estimate={pendingEstimate}
+              onBuild={handleBuildEstimate}
+              onClear={() => setPendingEstimate(null)}
+              busy={chatBusy}
+            />
+          )}
           {chatPanelOpen && chatHistory.length > 0 && (
             <div className="chatHistory">
               {chatHistory.slice(-6).map((msg, i) => {
