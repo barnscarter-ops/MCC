@@ -221,7 +221,7 @@ const server = http.createServer(async (req, res) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'gpt-4o-realtime-preview-2024-12-17',
+          model: 'gpt-realtime-2',
           voice: 'echo',
           instructions: `You are Maverick, an AI assistant for Grizzly Electric, an electrical contracting company in the Dallas/Fort Worth area. You have a confident, direct tone — knowledgeable and efficient, like a senior project manager.
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-const WS_URL = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17';
+const WS_URL = 'wss://api.openai.com/v1/realtime?model=gpt-realtime-2';
 const RAG_ENDPOINT = '/api/rag-voice-query';
 const TOKEN_ENDPOINT = '/api/realtime-token';
 
@@ -30,7 +30,7 @@ export function VoicePanel({ onClose, apiBase = '' }) {
         const ws = new WebSocket(WS_URL, [
           'realtime',
           `openai-insecure-api-key.${token}`,
-          'openai-beta.realtime-v1',
+          'openai-realtime-v1',
         ]);
         wsRef.current = ws;
 
