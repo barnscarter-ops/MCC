@@ -1,11 +1,11 @@
-require('dotenv').config({ path: 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard\\.env' });
+require('dotenv').config({ path: 'C:\\Workspace\\Active\\MCC\\.env' });
 
 module.exports = {
   apps: [
     {
       name: 'mav-console',
       script: 'server.mjs',
-      cwd: 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard',
+      cwd: 'C:\\Workspace\\Active\\MCC',
       interpreter: 'node',
       watch: false,
       autorestart: true,
@@ -15,19 +15,25 @@ module.exports = {
         PORT: '3000',
         MAV_REPO_BRIDGE_URL: 'http://127.0.0.1:8790',
         OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+        OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || 'http://192.168.1.12:4000',
         NVIDIA_NIM_API_KEY: process.env.NVIDIA_NIM_API_KEY || '',
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
         GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
         PROMETHEUS_URL: process.env.PROMETHEUS_URL || 'http://192.168.1.12:9090',
+        MAV_RAG_URL: process.env.MAV_RAG_URL || 'http://192.168.1.12:8181',
         MAV_EXTRA_ROOTS: process.env.MAV_EXTRA_ROOTS || '',
+        SUPABASE_URL: process.env.SUPABASE_URL || '',
+        SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || '',
+        VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL || '',
+        VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY || '',
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       windowsHide: true,
     },
     {
       name: 'prometheus-sync',
-      script: 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard\\scripts\\prometheus-sync.mjs',
-      cwd: 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard',
+      script: 'C:\\Workspace\\Active\\MCC\\scripts\\prometheus-sync.mjs',
+      cwd: 'C:\\Workspace\\Active\\MCC',
       interpreter: 'node',
       watch: false,
       autorestart: true,
