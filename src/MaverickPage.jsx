@@ -1,110 +1,146 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { VoicePanel } from './components/VoicePanel.jsx';
 
-const API_BASE = '';
-
-function MsgBubble({ msg }) {
+function MsgBubble({ msg, busy, isLast }) {
   const isUser = msg.role === 'user';
   return (
     <div className={`mavMsg ${isUser ? 'mavMsg--user' : 'mavMsg--assistant'}`}>
       <div className="mavMsg__bubble">
-        {msg.content.split('\n').map((line, i) => (
-          <React.Fragment key={i}>
-            {line}
-            {i < msg.content.split('\n').length - 1 && <br />}
-          </React.Fragment>
-        ))}
+        {msg.content
+          ? msg.content.split('\n').map((line, i, arr) => (
+              <React.Fragment key={i}>
+                {line}
+                {i < arr.length - 1 && <br />}
+              </React.Fragment>
+            ))
+          : (busy && isLast ? <span className="mavDot mavDot--cursor">▋</span> : null)}
       </div>
     </div>
-  );
-}
-
-function SourceChip({ source }) {
-  const label = typeof source === 'string'
-    ? source
-    : source?.title || source?.source || source?.id || source?.url || source?.type || 'source';
-  const type = typeof source === 'object' && source?.type ? `${source.type}: ` : '';
-  const score = typeof source === 'object' && Number.isFinite(source?.score) ? ` (${source.score.toFixed(3)})` : '';
-  const title = typeof source === 'object'
-    ? source.text || source.source || source.title || label
-    : source;
-
-  return (
-    <span className="mavSource" title={title}>
-      {type}{label}{score}
-    </span>
   );
 }
 
 export default function MaverickPage() {
   const [history, setHistory] = useState([]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [lastSources, setLastSources] = useState([]);
-  const [stats, setStats] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [pendingEstimate, setPendingEstimate] = useState(null);
+  const [showVoice, setShowVoice] = useState(false);
   const [error, setError] = useState(null);
+
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
-
-  useEffect(() => {
-    fetch(`/api/rag/stats`)
-      .then(r => r.json())
-      .then(setStats)
-      .catch(() => setStats(null));
-  }, []);
+  const abortRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [history, loading]);
+  }, [history, busy]);
 
-  const send = async () => {
-    const msg = input.trim();
-    if (!msg || loading) return;
+  function pushHistory(updater) {
+    setHistory(prev => typeof updater === 'function' ? updater(prev) : updater);
+  }
 
-    const newHistory = [...history, { role: 'user', content: msg }];
-    setHistory(newHistory);
-    setInput('');
-    setLoading(true);
+  async function _submit(text) {
+    if (!text.trim() || busy) return;
     setError(null);
+    setBusy(true);
+
+    const userMsg = { role: 'user', content: text };
+    pushHistory(prev => [...prev, userMsg, { role: 'assistant', content: '' }]);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let accum = '';
 
     try {
-      const res = await fetch(`/api/rag`, {
+      const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: msg,
-          history: history,
-          top_k: 12,
-        }),
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: text, mode: 'ask', history }),
+        signal: controller.signal,
       });
 
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`API ${res.status}: ${text}`);
+      if (!res.ok) throw new Error(`API ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw || raw === '[DONE]') continue;
+          try {
+            const tok = JSON.parse(raw);
+            const delta = tok.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              accum += delta;
+              pushHistory(prev => {
+                const next = [...prev];
+                next[next.length - 1] = { role: 'assistant', content: accum };
+                return next;
+              });
+            }
+          } catch {}
+        }
       }
 
-      const data = await res.json();
-      setHistory([...newHistory, { role: 'assistant', content: data.reply }]);
-      setLastSources(data.sources || []);
-    } catch (e) {
-      setError(e.message);
-      setHistory([...newHistory, { role: 'assistant', content: `Error: ${e.message}` }]);
+      // Detect [ESTIMATE_READY] block
+      const estMatch = accum.match(/\[ESTIMATE_READY\]([\s\S]*?)\[\/ESTIMATE_READY\]/);
+      if (estMatch) {
+        try {
+          setPendingEstimate(JSON.parse(estMatch[1]));
+          accum = accum.replace(/\s*\[ESTIMATE_READY\][\s\S]*?\[\/ESTIMATE_READY\]/, '').trimEnd();
+          pushHistory(prev => {
+            const next = [...prev];
+            next[next.length - 1] = { role: 'assistant', content: accum };
+            return next;
+          });
+        } catch {}
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setError(err.message);
+        pushHistory(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: 'assistant', content: `[Error: ${err.message}]` };
+          return next;
+        });
+      }
     } finally {
-      setLoading(false);
+      setBusy(false);
+      abortRef.current = null;
     }
-  };
+  }
 
-  const handleKey = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  };
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text) return;
+    setInput('');
+    await _submit(text);
+  }
 
-  const clearChat = () => {
-    setHistory([]);
-    setLastSources([]);
-    setError(null);
-  };
+  function submitMessage(text) {
+    const trimmed = text?.trim();
+    if (!trimmed || busy) return;
+    _submit(trimmed);
+  }
+
+  async function handleBuildEstimate() {
+    if (!pendingEstimate || busy) return;
+    const est = pendingEstimate;
+    setPendingEstimate(null);
+    const itemCount = (est.items?.length || 0) + (est.newItems?.length || 0);
+    await _submit(`Build it — ${itemCount} item estimate${est.customer?.name ? ` for ${est.customer.name}` : ''}`);
+  }
+
+  const lastAssistantText = [...history].reverse().find(m => m.role === 'assistant')?.content || '';
 
   return (
     <div className="mavPage">
@@ -114,20 +150,23 @@ export default function MaverickPage() {
           <span className="mavSubtitle">Estimating &amp; Proposal Agent — Grizzly Electrical Solutions</span>
         </div>
         <div className="mavHeaderRight">
-          {stats && (
-            <div className="mavStats">
-              <span className="mavStatChip">{stats.grizzly_hcp ?? 0} customer records</span>
-              <span className="mavStatChip">{stats.reference_docs ?? 0} reference chunks</span>
-            </div>
+          <button
+            className={`mavVoiceBtn${showVoice ? ' active' : ''}`}
+            onClick={() => setShowVoice(v => !v)}
+            disabled={busy && !showVoice}
+            title="Voice session"
+            type="button"
+          >🎙 VOICE</button>
+          {history.length > 0 && !busy && (
+            <button className="mavClearBtn" onClick={() => { setHistory([]); setPendingEstimate(null); setError(null); }} title="Clear conversation">
+              New Chat
+            </button>
           )}
-          <button className="mavClearBtn" onClick={clearChat} title="Clear conversation">
-            New Chat
-          </button>
         </div>
       </div>
 
       <div className="mavChat">
-        {history.length === 0 && (
+        {history.length === 0 && !showVoice && (
           <div className="mavEmpty">
             <p>Tell Maverick about a job scope, customer, or ask for a proposal.</p>
             <div className="mavPrompts">
@@ -146,47 +185,62 @@ export default function MaverickPage() {
         )}
 
         {history.map((msg, i) => (
-          <MsgBubble key={i} msg={msg} />
+          <MsgBubble key={i} msg={msg} busy={busy} isLast={i === history.length - 1} />
         ))}
+        <div ref={bottomRef} />
+      </div>
 
-        {loading && (
-          <div className="mavMsg mavMsg--assistant">
-            <div className="mavMsg__bubble mavMsg__bubble--loading">
-              <span className="mavDot" /><span className="mavDot" /><span className="mavDot" />
+      <div className="mavControls">
+        {/* Estimate confirm bar */}
+        {pendingEstimate && (
+          <div className="estimateConfirmBar">
+            <span className="estimateConfirmInfo">
+              📋 <strong>{(pendingEstimate.items?.length || 0) + (pendingEstimate.newItems?.length || 0)} items</strong> ready
+              {pendingEstimate.customer?.name ? ` — ${pendingEstimate.customer.name}` : ''}
+            </span>
+            <div className="estimateConfirmActions">
+              <button className="estimateConfirmClear" onClick={() => setPendingEstimate(null)} type="button">✕</button>
+              <button className="estimateConfirmBuild" onClick={handleBuildEstimate} disabled={busy} type="button">
+                {busy ? 'Working…' : '⚡ BUILD IT'}
+              </button>
             </div>
           </div>
         )}
 
-        <div ref={bottomRef} />
-      </div>
+        {/* Voice panel */}
+        {showVoice && (
+          <VoicePanel
+            onClose={() => setShowVoice(false)}
+            onSubmitText={submitMessage}
+            onStop={() => abortRef.current?.abort()}
+            onBuildEstimate={handleBuildEstimate}
+            pendingEstimate={pendingEstimate}
+            busy={busy}
+            lastAssistantText={lastAssistantText}
+          />
+        )}
 
-      {lastSources.length > 0 && (
-        <div className="mavSources">
-          <span className="mavSourcesLabel">Sources:</span>
-          {lastSources.slice(0, 6).map((s, i) => (
-            <SourceChip key={i} source={s} />
-          ))}
-        </div>
-      )}
+        {/* Text input */}
+        <form className="mavInputRow" onSubmit={handleSubmit}>
+          <textarea
+            ref={textareaRef}
+            className="mavTextarea"
+            rows={3}
+            placeholder={busy ? 'Maverick is responding…' : 'Describe the job scope, ask about a customer, or request a proposal…'}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e); } }}
+            disabled={busy}
+          />
+          <div className="mavInputActions">
+            {busy
+              ? <button type="button" className="mavStopBtn" onClick={() => abortRef.current?.abort()}>[ STOP ]</button>
+              : <button type="submit" className="mavSendBtn" disabled={!input.trim()}>Send</button>
+            }
+          </div>
+        </form>
 
-      <div className="mavInputRow">
-        <textarea
-          ref={textareaRef}
-          className="mavTextarea"
-          rows={3}
-          placeholder="Describe the job scope, ask about a customer, or request a proposal…"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKey}
-          disabled={loading}
-        />
-        <button
-          className={`mavSendBtn ${loading ? 'mavSendBtn--loading' : ''}`}
-          onClick={send}
-          disabled={loading || !input.trim()}
-        >
-          {loading ? '...' : 'Send'}
-        </button>
+        {error && <div className="mavError">{error}</div>}
       </div>
     </div>
   );

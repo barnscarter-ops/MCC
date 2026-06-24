@@ -3934,6 +3934,50 @@ body {
 .mavSendBtn:disabled { opacity: .4; cursor: not-allowed; }
 .mavSendBtn--loading { opacity: .6; }
 
+.mavStopBtn {
+  padding: 10px 20px;
+  background: rgba(255,80,80,.15);
+  border: 1px solid rgba(255,80,80,.4);
+  border-radius: 8px;
+  color: #ff8080;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  cursor: pointer;
+  transition: background .15s;
+}
+.mavStopBtn:hover { background: rgba(255,80,80,.25); }
+
+.mavVoiceBtn {
+  padding: 7px 14px;
+  background: rgba(0,220,100,.1);
+  border: 1px solid rgba(0,220,100,.3);
+  border-radius: 8px;
+  color: rgba(0,220,100,.9);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.mavVoiceBtn:hover { background: rgba(0,220,100,.18); }
+.mavVoiceBtn.active { background: rgba(0,220,100,.22); border-color: rgba(0,220,100,.6); }
+.mavVoiceBtn:disabled { opacity: .4; cursor: not-allowed; }
+
+.mavControls { display: flex; flex-direction: column; gap: 0; flex-shrink: 0; }
+
+.mavInputActions { display: flex; justify-content: flex-end; padding: 6px 0 0; }
+
+.mavError {
+  padding: 8px 12px;
+  margin: 4px 16px;
+  background: rgba(255,80,80,.1);
+  border: 1px solid rgba(255,80,80,.3);
+  border-radius: 6px;
+  color: #ff8080;
+  font-size: 12px;
+}
+
 /* ── Client Dashboard (?client mode) ─────────────────────────────────────── */
 
 .cdb-root {
