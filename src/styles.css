@@ -4542,6 +4542,29 @@ body {
   height: 6px;
 }
 
+.mdTable {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0 12px;
+  font-size: 13px;
+}
+
+.mdTh {
+  text-align: left;
+  padding: 5px 10px;
+  background: rgba(255,255,255,.06);
+  color: #e0e6f4;
+  font-weight: 700;
+  border: 1px solid rgba(255,255,255,.1);
+  white-space: nowrap;
+}
+
+.mdTd {
+  padding: 4px 10px;
+  color: #c4ccdc;
+  border: 1px solid rgba(255,255,255,.07);
+}
+
 .applyStagedWrap {
   display: block;
   margin-top: 6px;

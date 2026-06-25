@@ -68,5 +68,18 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       windowsHide: true,
     },
+    {
+      name: 'mcc-dashboard-agent',
+      script: 'agent.py',
+      cwd: 'C:\\Workspace\\Shared\\Agents\\HomeLab-Agent',
+      interpreter: 'C:\\Users\\carte\\AppData\\Local\\Programs\\Python\\Python312\\python.exe',
+      watch: false,
+      autorestart: true,
+      max_restarts: 999,
+      restart_delay: 5000,
+      env_file: 'C:\\Workspace\\Shared\\Agents\\HomeLab-Agent\\.env',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      windowsHide: true,
+    },
   ]
 };

@@ -55,7 +55,7 @@ export default function MaverickPage() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: text, mode: 'ask', history }),
+        body: JSON.stringify({ prompt: text, mode: 'agent', history }),
         signal: controller.signal,
       });
 
@@ -136,8 +136,66 @@ export default function MaverickPage() {
     if (!pendingEstimate || busy) return;
     const est = pendingEstimate;
     setPendingEstimate(null);
-    const itemCount = (est.items?.length || 0) + (est.newItems?.length || 0);
-    await _submit(`Build it — ${itemCount} item estimate${est.customer?.name ? ` for ${est.customer.name}` : ''}`);
+    setBusy(true);
+    pushHistory(prev => [...prev, { role: 'user', content: '⚡ Build estimate' }, { role: 'assistant', content: '' }]);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let accum = '';
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          prompt: 'Build estimate',
+          mode: 'estimate-ready',
+          lineItems: est.lineItems || [],
+          newPricebookItems: est.newPricebookItems?.length ? est.newPricebookItems : undefined,
+          pendingCustomer: est.customerName ? { name: est.customerName, email: est.customerEmail, phone: est.customerPhone } : undefined,
+          techIds: est.techIds?.length ? est.techIds : undefined,
+          depositPercent: est.depositPercent ?? undefined,
+        }),
+        signal: controller.signal,
+      });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw || raw === '[DONE]') continue;
+          try {
+            const tok = JSON.parse(raw);
+            const delta = tok.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              accum += delta;
+              pushHistory(prev => {
+                const next = [...prev];
+                next[next.length - 1] = { role: 'assistant', content: accum };
+                return next;
+              });
+            }
+          } catch {}
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setError(err.message);
+        pushHistory(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: 'assistant', content: `[Error: ${err.message}]` };
+          return next;
+        });
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+    }
   }
 
   const lastAssistantText = [...history].reverse().find(m => m.role === 'assistant')?.content || '';
@@ -195,8 +253,8 @@ export default function MaverickPage() {
         {pendingEstimate && (
           <div className="estimateConfirmBar">
             <span className="estimateConfirmInfo">
-              📋 <strong>{(pendingEstimate.items?.length || 0) + (pendingEstimate.newItems?.length || 0)} items</strong> ready
-              {pendingEstimate.customer?.name ? ` — ${pendingEstimate.customer.name}` : ''}
+              📋 <strong>{(pendingEstimate.lineItems?.length || 0) + (pendingEstimate.newPricebookItems?.length || 0)} items</strong> ready
+              {pendingEstimate.customerName ? ` — ${pendingEstimate.customerName}` : ''}
             </span>
             <div className="estimateConfirmActions">
               <button className="estimateConfirmClear" onClick={() => setPendingEstimate(null)} type="button">✕</button>

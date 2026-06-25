@@ -164,18 +164,30 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (url.pathname === '/api/workflows/seo/posts/week') {
-    sendJson(res, 200, await callRepoBridge('/seo/posts/week', { timeoutMs: 10_000 }));
+    try {
+      sendJson(res, 200, await callRepoBridge('/seo/posts/week', { timeoutMs: 10_000 }));
+    } catch (err) {
+      sendJson(res, 502, { error: err.message });
+    }
     return;
   }
   if (url.pathname === '/api/workflows/seo/facebook/pending-prompt') {
-    sendJson(res, 200, await callRepoBridge('/seo/facebook/pending-prompt', { timeoutMs: 5_000 }));
+    try {
+      sendJson(res, 200, await callRepoBridge('/seo/facebook/pending-prompt', { timeoutMs: 5_000 }));
+    } catch (err) {
+      sendJson(res, 502, { error: err.message });
+    }
     return;
   }
   if (url.pathname === '/api/workflows/seo/facebook/approve-prompt' && req.method === 'POST') {
-    const body = await readJsonBody(req);
-    sendJson(res, 200, await callRepoBridge('/seo/facebook/approve-prompt', {
-      method: 'POST', body, timeoutMs: 5_000,
-    }));
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, await callRepoBridge('/seo/facebook/approve-prompt', {
+        method: 'POST', body, timeoutMs: 5_000,
+      }));
+    } catch (err) {
+      sendJson(res, 502, { error: err.message });
+    }
     return;
   }
   if (url.pathname === '/api/orchestrator/plan' && req.method === 'POST') {

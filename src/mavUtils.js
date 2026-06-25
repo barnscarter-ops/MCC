@@ -78,6 +78,34 @@ export function MavMarkdown({ content }) {
       }
       elements.push(React.createElement('ol', { key: `ol-${i}`, className: 'mdOl' }, items));
       continue;
+    } else if (line.startsWith('|')) {
+      // Markdown table — collect all consecutive | rows
+      const rows = [];
+      while (i < lines.length && lines[i].startsWith('|')) {
+        rows.push(lines[i]);
+        i++;
+      }
+      // First row = header, second row = separator (skip it), rest = body
+      const header = rows[0].split('|').filter((_, ci) => ci > 0 && ci < rows[0].split('|').length - 1);
+      const body = rows.slice(2); // skip separator row
+      elements.push(
+        React.createElement('table', { key: `tbl-${i}`, className: 'mdTable' },
+          React.createElement('thead', null,
+            React.createElement('tr', null,
+              header.map((cell, ci) => React.createElement('th', { key: ci, className: 'mdTh' }, inlineFormat(cell.trim())))
+            )
+          ),
+          React.createElement('tbody', null,
+            body.map((row, ri) => {
+              const cells = row.split('|').filter((_, ci) => ci > 0 && ci < row.split('|').length - 1);
+              return React.createElement('tr', { key: ri },
+                cells.map((cell, ci) => React.createElement('td', { key: ci, className: 'mdTd' }, inlineFormat(cell.trim())))
+              );
+            })
+          )
+        )
+      );
+      continue;
     } else if (line.startsWith('---') || line.startsWith('___')) {
       elements.push(React.createElement('hr', { key: i, className: 'mdHr' }));
     } else if (line.trim() === '') {
