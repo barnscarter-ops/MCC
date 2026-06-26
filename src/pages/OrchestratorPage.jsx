@@ -378,7 +378,7 @@ export function OrchestratorPage({ modelStatus, chatSession }) {
       <Panel title="MEMORY CONTEXT" className="memoryPanel">
         <div className="memorySummary">
           <strong>{memoryContext.count ?? memoryContext.memories?.length ?? 0} MEMORIES</strong>
-          <span>{memoryContext.source === 'repo-bridge' ? 'WINDOWS BRIDGE' : (memoryContext.state || 'UNKNOWN').toUpperCase()}</span>
+          <span>{memoryContext.source === 'seo-app' ? 'SEO APP' : (memoryContext.state || 'UNKNOWN').toUpperCase()}</span>
         </div>
         <div className="memoryTypes">
           {Object.entries(memoryContext.typeCounts || {}).map(([type, count]) => (

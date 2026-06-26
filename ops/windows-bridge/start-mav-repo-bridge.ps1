@@ -5,10 +5,10 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
 
 $bridge = "C:\Workspace\Active\homelab-noc-dashboard\homelab-noc-dashboard\homelab-noc-dashboard\ops\windows-bridge\mav-repo-bridge.mjs"
 $logFile = "C:\Workspace\Active\homelab-noc-dashboard\homelab-noc-dashboard\homelab-noc-dashboard\ops\windows-bridge\mav-repo-bridge.log"
-$port = if ($env:MAV_REPO_BRIDGE_PORT) { $env:MAV_REPO_BRIDGE_PORT } else { "8790" }
+$port = if ($env:SEO_APP_PORT) { $env:SEO_APP_PORT } else { "8790" }
 
 if (-not (Test-Path $bridge)) {
-    Write-Error "Repo bridge file not found at $bridge"
+    Write-Error "SEO App bridge file not found at $bridge"
 }
 
 $env:MAV_REPO_DEFAULT = if ($env:MAV_REPO_DEFAULT) {
@@ -23,7 +23,7 @@ $env:MAV_REPO_ALLOWED_ROOTS = if ($env:MAV_REPO_ALLOWED_ROOTS) {
     "C:\Workspace\Active;C:\Users\carte\CodeProjects"
 }
 
-Write-Host "Starting mav repo bridge on http://0.0.0.0:$port ..." -ForegroundColor Cyan
+Write-Host "Starting SEO Agents App bridge on http://0.0.0.0:$port ..." -ForegroundColor Cyan
 Write-Host "Default repo: $env:MAV_REPO_DEFAULT" -ForegroundColor DarkGray
 Write-Host "Allowed roots: $env:MAV_REPO_ALLOWED_ROOTS" -ForegroundColor DarkGray
 Write-Host "Log: $logFile" -ForegroundColor DarkGray

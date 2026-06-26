@@ -10,7 +10,7 @@ import {
 import { send, sendJson, readJsonBody } from './lib/http.mjs';
 import { seoTaskLog } from './lib/state.mjs';
 import { getMemoryIndex } from './lib/memory.mjs';
-import { callRepoBridge } from './lib/models.mjs';
+import { callSeoApp } from './lib/models.mjs';
 import { getLlamaStatus } from './lib/llama-status.mjs';
 import { handleExtractFile } from './lib/extract.mjs';
 import { getSeoWorkflowStatus, proxySeoActions } from './routes/seo.mjs';
@@ -165,7 +165,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/workflows/seo/posts/week') {
     try {
-      sendJson(res, 200, await callRepoBridge('/seo/posts/week', { timeoutMs: 10_000 }));
+      sendJson(res, 200, await callSeoApp('/seo/posts/week', { timeoutMs: 10_000 }));
     } catch (err) {
       sendJson(res, 502, { error: err.message });
     }
@@ -173,7 +173,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/workflows/seo/facebook/pending-prompt') {
     try {
-      sendJson(res, 200, await callRepoBridge('/seo/facebook/pending-prompt', { timeoutMs: 5_000 }));
+      sendJson(res, 200, await callSeoApp('/seo/facebook/pending-prompt', { timeoutMs: 5_000 }));
     } catch (err) {
       sendJson(res, 502, { error: err.message });
     }
@@ -182,7 +182,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/workflows/seo/facebook/approve-prompt' && req.method === 'POST') {
     try {
       const body = await readJsonBody(req);
-      sendJson(res, 200, await callRepoBridge('/seo/facebook/approve-prompt', {
+      sendJson(res, 200, await callSeoApp('/seo/facebook/approve-prompt', {
         method: 'POST', body, timeoutMs: 5_000,
       }));
     } catch (err) {

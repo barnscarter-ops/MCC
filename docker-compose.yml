@@ -6,7 +6,7 @@ services:
     environment:
       PROMETHEUS_URL: http://192.168.1.12:9090
       LLAMA_SERVER_URL: http://192.168.1.10:8080
-      MAV_REPO_BRIDGE_URL: http://192.168.1.10:8790
+      SEO_APP_URL: http://192.168.1.10:8790
       MAV_CONSOLE_DATA_DIR: /app/data
       MAV_CONSOLE_WORKSPACE: 'C:\Workspace\Active\homelab-noc-dashboard\homelab-noc-dashboard\homelab-noc-dashboard'
       MAV_MEMORY_PATH: 'C:\Users\carte\.claude\projects\memory'

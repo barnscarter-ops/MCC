@@ -32,7 +32,7 @@ export function compactModelName(name) {
 export function workerLabel(workerId) {
   const labels = {
     'local-qwen': 'LOCAL QWEN',
-    'repo-bridge': 'REPO BRIDGE',
+    'seo-app': 'SEO APP',
     'codex-review': 'CODEX REVIEW',
     'claude-cli': 'CLAUDE CLI',
     'rag-server': 'RAG SERVER'

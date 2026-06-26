@@ -8,7 +8,7 @@ import {
   readLedger, addLedgerRun, updateLedgerRun, orchestratorState, saveOrchestratorState,
 } from '../lib/state.mjs';
 import { getMemoryIndex } from '../lib/memory.mjs';
-import { getRepoBridgeState, callLocalModel } from '../lib/models.mjs';
+import { getSeoAppState, callLocalModel } from '../lib/models.mjs';
 import { triggerSelfImprove } from '../lib/self-improve.mjs';
 
 function fallbackPlan(idea, rawText = '') {
@@ -56,7 +56,7 @@ function parsePlan(idea, rawText) {
 }
 
 function workerIds() {
-  return ['local-qwen', 'repo-bridge', 'codex-review', 'claude-cli', 'rag-server'];
+  return ['local-qwen', 'seo-app', 'codex-review', 'claude-cli', 'rag-server'];
 }
 
 function normalizeWorker(worker) {
@@ -64,7 +64,7 @@ function normalizeWorker(worker) {
 }
 
 export async function getOrchestratorStatus(res) {
-  const repoBridgeState = await getRepoBridgeState();
+  const seoAppState = await getSeoAppState();
   const memoryIndex = await getMemoryIndex();
   const taskRuns = readLedger();
   sendJson(res, 200, {
@@ -79,13 +79,13 @@ export async function getOrchestratorStatus(res) {
         state: 'online-check-via-model-panel'
       },
       {
-        id: 'repo-bridge',
-        label: 'Windows Repo Bridge',
-        role: 'git diff, status, and worker audit',
+        id: 'seo-app',
+        label: 'SEO Agents App',
+        role: 'SEO workflow, posting, and worker audit',
         cost: 'local',
-        endpoint: repoBridgeState.endpoint,
-        state: repoBridgeState.state,
-        detail: repoBridgeState.detail
+        endpoint: seoAppState.endpoint,
+        state: seoAppState.state,
+        detail: seoAppState.detail
       },
       {
         id: 'codex-review',
@@ -292,7 +292,7 @@ Do not claim you changed files.`;
 function workerLabelForServer(worker) {
   const labels = {
     'local-qwen': 'Local Qwen',
-    'repo-bridge': 'Repo Bridge',
+    'seo-app': 'SEO Agents App',
     'codex-review': 'Codex Review',
     'claude-cli': 'Claude CLI',
     'rag-server': 'RAG Server'

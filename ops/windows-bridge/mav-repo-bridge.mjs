@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-const port = Number(process.env.MAV_REPO_BRIDGE_PORT || 8790);
-const host = process.env.MAV_REPO_BRIDGE_HOST || '0.0.0.0';
+const port = Number(process.env.SEO_APP_PORT || 8790);
+const host = process.env.SEO_APP_HOST || '0.0.0.0';
 const defaultRepo = process.env.MAV_REPO_DEFAULT || 'C:\\Workspace\\Active\\homelab-noc-dashboard\\homelab-noc-dashboard\\homelab-noc-dashboard';
 const seoAppPath = process.env.MAV_SEO_APP_PATH || 'C:\\Workspace\\Active\\SEO-Agents-App';
 const memoryPath = process.env.MAV_MEMORY_PATH || 'C:\\Users\\carte\\.claude\\projects\\memory';
@@ -780,7 +780,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`mav repo bridge listening on http://${host}:${port}`);
+  console.log(`SEO Agents App bridge listening on http://${host}:${port}`);
   console.log(`Default repo: ${defaultRepo}`);
   console.log(`Allowed roots: ${allowedRoots.join('; ')}`);
 });

@@ -247,7 +247,7 @@ export function HomePage({ modelStatus }) {
           <div>
             <span>7-DAY REPORTS</span>
             <strong>{reportsLast7Days.length}</strong>
-            <em>{seoWorkflow.source === 'repo-bridge' ? 'WINDOWS BRIDGE' : (seoWorkflow.state || 'UNKNOWN').toUpperCase()}</em>
+            <em>{seoWorkflow.source === 'seo-app' ? 'SEO APP' : (seoWorkflow.state || 'UNKNOWN').toUpperCase()}</em>
           </div>
           <div>
             <span>FAULTS</span>

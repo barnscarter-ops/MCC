@@ -18,7 +18,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '3000',
-        MAV_REPO_BRIDGE_URL: 'http://127.0.0.1:8790',
+        SEO_APP_URL: 'http://127.0.0.1:8790',
         OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
         OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || 'http://192.168.1.12:4000',
         NVIDIA_NIM_API_KEY: process.env.NVIDIA_NIM_API_KEY || '',

@@ -8,7 +8,7 @@ It uses Prometheus as the data source and keeps Grafana out of the visual layer.
 
 MCC is the control center for local infrastructure, local AI runtime health, and client workflow automation. The home page shows workflow status, online agents, action queues, approvals, recent reports, and live execution readiness.
 
-The SEO workflow panel reads from the Windows repo bridge, which exposes the SEO-Agents-App outputs to the Proxmox-hosted dashboard.
+The SEO workflow panel reads from the SEO Agents App bridge, which exposes the SEO-Agents-App outputs to the Proxmox-hosted dashboard.
 
 Current bridge endpoints:
 
@@ -48,7 +48,7 @@ npm start
 
 The dashboard polls `LLAMA_SERVER_URL` through `/api/llm/status` and displays the currently loaded local model in the top bar and Local AI Core panel.
 
-## Windows Repo Bridge
+## SEO Agents App Bridge
 
 The bridge source is:
 
