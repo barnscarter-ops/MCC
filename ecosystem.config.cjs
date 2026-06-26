@@ -9,7 +9,12 @@ module.exports = {
       interpreter: 'node',
       watch: false,
       autorestart: true,
-      max_restarts: 5,
+      // min_uptime guards against a crash-loop on boot: without it a process that
+      // dies in <1s (e.g. a late-mounting dependency right after reboot) burns all
+      // restarts in a blink and stays dead. restart_delay gives upstreams time.
+      max_restarts: 10,
+      min_uptime: '15s',
+      restart_delay: 4000,
       env: {
         NODE_ENV: 'production',
         PORT: '3000',
