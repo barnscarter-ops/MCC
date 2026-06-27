@@ -9,9 +9,9 @@ Maverick Assistant (MCA, Vercel) proxies to MCC via Tailscale Funnel.
 ```
 lib/
   chat.mjs         — ALL AI chat logic: handleChat, estimate handlers, build/ops orchestration
-  config.mjs       — env vars: ragUrl, llamaServerUrl, anthropicApiKey, hcpDir, openAiBaseUrl, etc.
+  config.mjs       — env vars: ragUrl, anthropicApiKey, openRouterUrl/ApiKey/Model, openAiBaseUrl, geminiApiKey, hcpDir, etc.
   prompts.mjs      — all LLM system prompts
-  models.mjs       — callClaude(), callPiRpc()
+  models.mjs       — provider primitives (anthropicChat/openRouterChat/openAiChat), callClaude(), callLocalModel(), callPiRpc()
   http.mjs         — sseWrite(), sendJson(), readJsonBody()
   state.mjs        — addLedgerRun()
   exec.mjs         — resolveSafePath, loadSkills, workspaceTree, runExecTool, persistStagedRun

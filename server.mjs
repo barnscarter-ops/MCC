@@ -4,8 +4,8 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 
 import {
-  rootDir, distDir, port, deployStartedAt, prometheusUrl, ragUrl, llamaServerUrl,
-  types, ALLOWED_ORIGINS,
+  rootDir, distDir, port, deployStartedAt, prometheusUrl, ragUrl,
+  types, ALLOWED_ORIGINS, OPENROUTER_MODELS, openRouterUrl, openRouterModel,
 } from './lib/config.mjs';
 import { send, sendJson, readJsonBody } from './lib/http.mjs';
 import { seoTaskLog } from './lib/state.mjs';
@@ -134,6 +134,11 @@ const server = http.createServer(async (req, res) => {
     await getLlamaStatus(res);
     return;
   }
+  if (url.pathname === '/api/llm/models') {
+    sendJson(res, 200, { models: OPENROUTER_MODELS, defaultModel: openRouterModel });
+    return;
+  }
+
   if (url.pathname === '/api/orchestrator/status') {
     await getOrchestratorStatus(res);
     return;
@@ -346,5 +351,5 @@ server.on('error', (err) => {
 server.listen(port, '0.0.0.0', () => {
   console.log(`mav-console dashboard listening on http://0.0.0.0:${port}`);
   console.log(`Prometheus: ${prometheusUrl}`);
-  console.log(`llama.cpp: ${llamaServerUrl}`);
+  console.log(`OpenRouter: ${openRouterUrl} (model: ${openRouterModel})`);
 });

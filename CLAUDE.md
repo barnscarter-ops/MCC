@@ -9,9 +9,9 @@ Maverick Assistant (MCA, Vercel) proxies to MCC via Tailscale Funnel.
 ```
 lib/
   chat.mjs         — ALL AI chat logic: handleChat, estimate handlers, build/ops orchestration
-  config.mjs       — env vars: ragUrl, llamaServerUrl, anthropicApiKey, hcpDir, openAiBaseUrl, etc.
+  config.mjs       — env vars: ragUrl, anthropicApiKey, openRouterUrl/ApiKey/Model, openAiBaseUrl, geminiApiKey, hcpDir, etc.
   prompts.mjs      — all LLM system prompts
-  models.mjs       — callClaude(), callPiRpc()
+  models.mjs       — provider primitives (anthropicChat/openRouterChat/openAiChat), callClaude(), callLocalModel(), callPiRpc()
   http.mjs         — sseWrite(), sendJson(), readJsonBody()
   state.mjs        — addLedgerRun()
   exec.mjs         — resolveSafePath, loadSkills, workspaceTree, runExecTool, persistStagedRun
@@ -34,9 +34,10 @@ src/
 
 | mode | handler | description |
 |------|---------|-------------|
-| `ask` | RAG → Claude/Qwen fallback | General Q&A + estimate intent detection |
-| `build` | Claude director → Qwen executor → NIM QC | Agentic coding loop |
-| `ops` | Claude orchestrator → ops tools | Email, docs, spreadsheets, agents |
+| `ask` | RAG → Claude direct (→ OpenRouter fallback) | General Q&A + estimate intent detection |
+| `agent` | Maverick agent in grizzly-hcp (Claude direct via Mastra) | Read tools + write workflows |
+| `build` | Claude director → OpenRouter GLM executor → NIM QC | Agentic coding loop |
+| `ops` | Claude orchestrator → ops tools (OpenRouter GLM executor) | Email, docs, spreadsheets, agents |
 | `claude-code` | Claude Code CLI session | Full filesystem access via Superpowers |
 | `estimate-ready` | `spawnEstimatePipeline()` | Pre-structured line items → grizzly-hcp |
 

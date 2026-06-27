@@ -2,7 +2,7 @@
 // plan, routes tasks to local/hosted workers, and tracks task runs in the ledger.
 // buildDashboardContext is exported for the chat pipeline (server.mjs) to prepend live
 // system state to assistant prompts.
-import { llamaServerUrl, workspacePath } from '../lib/config.mjs';
+import { anthropicApiKey, anthropicModel, workspacePath } from '../lib/config.mjs';
 import { sendJson, readJsonBody } from '../lib/http.mjs';
 import {
   readLedger, addLedgerRun, updateLedgerRun, orchestratorState, saveOrchestratorState,
@@ -72,10 +72,10 @@ export async function getOrchestratorStatus(res) {
     workers: [
       {
         id: 'local-qwen',
-        label: 'Cline/Qwen Local',
+        label: 'Claude (Anthropic)',
         role: 'fast planner and coding brief',
-        cost: 'local',
-        endpoint: llamaServerUrl,
+        cost: 'api',
+        endpoint: 'https://api.anthropic.com',
         state: 'online-check-via-model-panel'
       },
       {
@@ -328,17 +328,18 @@ export async function buildDashboardContext() {
     `DATE/TIME: ${new Date().toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
   ];
 
-  // Local model — quick probe, 1.5s timeout
+  // Workhorse model (Claude / Anthropic) — quick probe, 1.5s timeout
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 1500);
-    const r = await fetch(new URL('/v1/models', llamaServerUrl), { signal: ctrl.signal });
+    const r = await fetch('https://api.anthropic.com/v1/models', {
+      signal: ctrl.signal,
+      headers: { 'x-api-key': anthropicApiKey, 'anthropic-version': '2023-06-01' },
+    });
     clearTimeout(t);
-    const payload = await r.json();
-    const modelId = payload?.data?.[0]?.id || payload?.models?.[0]?.id || 'unknown';
-    lines.push(`LOCAL MODEL: ${r.ok ? 'ONLINE' : 'ERROR'} | ${modelId}`);
+    lines.push(`WORKHORSE MODEL: ${r.ok ? 'ONLINE' : 'ERROR'} | ${anthropicModel}`);
   } catch {
-    lines.push('LOCAL MODEL: OFFLINE');
+    lines.push('WORKHORSE MODEL: OFFLINE');
   }
 
   // Active orchestrator plan (in-memory, sync)
