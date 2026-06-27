@@ -36,8 +36,8 @@ src/
 |------|---------|-------------|
 | `ask` | RAG → Claude direct (→ OpenRouter fallback) | General Q&A + estimate intent detection |
 | `agent` | Maverick agent in grizzly-hcp (Claude direct via Mastra) | Read tools + write workflows |
-| `build` | Claude director → OpenRouter GLM executor → NIM QC | Agentic coding loop |
-| `ops` | Claude orchestrator → ops tools (OpenRouter GLM executor) | Email, docs, spreadsheets, agents |
+| `build` | Claude director → Pi executor (`PI_MODEL`) → NIM QC | Agentic coding loop |
+| `ops` | Claude orchestrator → ops tools (local Qwen executor → OpenRouter GLM fallback) | Email, docs, spreadsheets, agents |
 | `claude-code` | Claude Code CLI session | Full filesystem access via Superpowers |
 | `estimate-ready` | `spawnEstimatePipeline()` | Pre-structured line items → grizzly-hcp |
 
