@@ -6,6 +6,8 @@ import { Panel } from '../components/Dashboard.jsx';
 import { approveSeoAction, querySeoActions, runSeoAction } from '../lib/api.js';
 import { workerLabel } from '../lib/dashboardHelpers.js';
 
+const STATUS_BUCKETS = ['pending', 'in_process', 'completed', 'failed'];
+
 export function HomePage({ modelStatus }) {
   const orchestratorStatus = useOrchestratorStatus();
   const seoWorkflow = useSeoWorkflow();
@@ -28,7 +30,6 @@ export function HomePage({ modelStatus }) {
     const reportTime = new Date(report.updatedAt).getTime();
     return Number.isFinite(reportTime) && reportTime >= sevenDaysAgoMs;
   });
-  const STATUS_BUCKETS = ['pending', 'in_process', 'completed', 'failed'];
   const upcomingActions = actions
     .filter((action) => {
       const s = String(action.status || '').toLowerCase();
