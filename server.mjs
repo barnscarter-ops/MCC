@@ -195,6 +195,17 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+  if (url.pathname === '/api/workflows/seo/facebook/new-schedule' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, await callSeoApp('/seo/facebook/new-schedule', {
+        method: 'POST', body, timeoutMs: 10_000,
+      }));
+    } catch (err) {
+      sendJson(res, 502, { error: err.message });
+    }
+    return;
+  }
   if (url.pathname === '/api/orchestrator/plan' && req.method === 'POST') {
     await createOrchestratorPlan(req, res);
     return;

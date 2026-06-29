@@ -181,3 +181,14 @@ export async function runSeoAction(actionId, label = '', type = '', live = false
   if (!response.ok) throw new Error(payload.error || `SEO action run failed: ${response.status}`);
   return payload;
 }
+
+export async function generateFacebookSchedule(days = 7, startDate = '') {
+  const response = await fetch(api('/api/workflows/seo/facebook/new-schedule'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ days, startDate }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `Schedule generation failed: ${response.status}`);
+  return payload;
+}
